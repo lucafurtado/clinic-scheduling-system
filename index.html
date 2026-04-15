@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clínica Horizonte Saúde | Agendamento</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header class="topo">
+    <div class="topo-conteudo">
+      <h1>Clínica Horizonte Saúde</h1>
+      <p>Cuidado humanizado, agendamento simples e atendimento com confiança.</p>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="hero">
+      <div class="hero-texto">
+        <h2>Agende sua consulta ou exame com praticidade</h2>
+        <p>
+          Escolha a especialidade, selecione o profissional, visualize as datas disponíveis
+          e acompanhe seus agendamentos de forma rápida e organizada.
+        </p>
+      </div>
+    </section>
+
+    <div class="grid">
+      <section class="card">
+        <h2>Novo Agendamento</h2>
+
+        <div class="form-group">
+          <label for="especialidade">Especialidade</label>
+          <select id="especialidade" onchange="carregarProfissionaisPorEspecialidade()">
+            <option value="">Selecione uma especialidade</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="profissional">Profissional</label>
+          <select id="profissional" onchange="carregarDatasDisponiveis()">
+            <option value="">Selecione um profissional</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Datas disponíveis</label>
+          <p id="mensagemDatas" class="mensagem-ajuda">
+            Selecione uma especialidade e um profissional para visualizar as datas disponíveis.
+          </p>
+          <div id="datasDisponiveis" class="datas-grid"></div>
+          <input type="hidden" id="dataConsulta">
+        </div>
+
+        <div class="form-group">
+          <label for="nome">Nome</label>
+          <input id="nome" type="text" placeholder="Digite seu nome completo">
+        </div>
+
+        <div class="form-group">
+          <label for="cpf">CPF</label>
+          <input id="cpf" type="text" placeholder="Digite seu CPF">
+        </div>
+
+        <button class="btn-primary" onclick="agendar()">Confirmar agendamento</button>
+        <div id="statusAgendamento" class="status"></div>
+      </section>
+
+      <section class="coluna-lateral">
+        <section class="card">
+          <h2>Profissionais da Clínica</h2>
+          <ul id="listaProfissionais"></ul>
+        </section>
+
+        <section class="card resumo-card oculto" id="resumoConfirmado">
+          <h2>Último agendamento realizado</h2>
+          <div class="resumo-confirmado-conteudo">
+            <p><strong>Paciente:</strong> <span id="confirmadoNome">—</span></p>
+            <p><strong>Especialidade:</strong> <span id="confirmadoEspecialidade">—</span></p>
+            <p><strong>Profissional:</strong> <span id="confirmadoProfissional">—</span></p>
+            <p><strong>Data:</strong> <span id="confirmadoData">—</span></p>
+          </div>
+        </section>
+      </section>
+
+      <section class="card full">
+        <h2>Consultar agendamento por CPF</h2>
+
+        <div class="form-group">
+          <label for="cpfBusca">CPF</label>
+          <input id="cpfBusca" type="text" placeholder="Digite o CPF com ou sem formatação">
+        </div>
+
+        <button class="btn-primary" onclick="buscarAgendamentos()">Buscar agendamentos</button>
+        <div id="statusBusca" class="status"></div>
+        <ul id="listaAgendamentos"></ul>
+      </section>
+    </div>
+
+    <footer class="rodape">
+      <div>
+        <strong>Clínica Horizonte Saúde</strong><br>
+        Endereço fictício: Avenida Central, 250 — Brasília/DF<br>
+        Telefone: (61) 3333-0000 | Horário: 08h às 18h
+      </div>
+    </footer>
+  </main>
+
+  <script>
+    function mostrarStatus(id, mensagem, tipo) {
+      const box = document.getElementById(id);
+      box.textContent = mensagem;
+      box.className = `status ${tipo}`;
+    }
+
+    function limparStatus(id) {
+      const box = document.getElementById(id);
+      box.textContent = '';
+      box.className = 'status';
+    }
+
+    function formatarData(dataISO) {
+      const [ano, mes, dia] = dataISO.split('-');
+      return `${dia}/${mes}/${ano}`;
+    }
+
+    function formatarCPF(cpf) {
+      const numeros = String(cpf).replace(/\D/g, '');
+      if (numeros.length !== 11) return cpf;
+      return numeros.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+    }
+
+    function mostrarResumoConfirmado(agendamento) {
+      document.getElementById('confirmadoNome').textContent = agendamento.nome;
+      document.getElementById('confirmadoEspecialidade').textContent = agendamento.especialidade;
+      document.getElementById('confirmadoProfissional').textContent = agendamento.profissional;
+      document.getElementById('confirmadoData').textContent = formatarData(agendamento.dataConsulta);
+      document.getElementById('resumoConfirmado').classList.remove('oculto');
+    }
+
+    function carregarEspecialidades() {
+      fetch('http://localhost:3000/especialidades')
+        .then(res => res.json())
+        .then(data => {
+          const select = document.getElementById('especialidade');
+          select.innerHTML = '<option value="">Selecione uma especialidade</option>';
+
+          data.forEach(esp => {
+            const option = document.createElement('option');
+            option.value = esp;
+            option.textContent = esp;
+            select.appendChild(option);
+          });
+        })
+        .catch(error => {
+          mostrarStatus('statusAgendamento', 'Erro ao carregar especialidades.', 'erro');
+          console.error(error);
+        });
+    }
+
+    function carregarListaProfissionais() {
+      fetch('http://localhost:3000/profissionais')
+        .then(res => res.json())
+        .then(data => {
+          const lista = document.getElementById('listaProfissionais');
+          lista.innerHTML = '';
+
+          data.forEach(p => {
+            const li = document.createElement('li');
+            li.innerHTML = `
+              <strong>${p.nome}</strong><br>
+              ${p.especialidade}
+            `;
+            lista.appendChild(li);
+          });
+        })
+        .catch(error => {
+          console.error(error);
+        });
+    }
+
+    function carregarProfissionaisPorEspecialidade() {
+      const especialidade = document.getElementById('especialidade').value;
+      const profissionalSelect = document.getElementById('profissional');
+      const datasContainer = document.getElementById('datasDisponiveis');
+      const dataConsulta = document.getElementById('dataConsulta');
+      const mensagemDatas = document.getElementById('mensagemDatas');
+
+      profissionalSelect.innerHTML = '<option value="">Selecione um profissional</option>';
+      datasContainer.innerHTML = '';
+      dataConsulta.value = '';
+
+      if (!especialidade) {
+        mensagemDatas.textContent = 'Selecione uma especialidade e um profissional para visualizar as datas disponíveis.';
+        return;
+      }
+
+      mensagemDatas.textContent = 'Selecione um profissional para visualizar as datas disponíveis.';
+
+      fetch(`http://localhost:3000/profissionais?especialidade=${encodeURIComponent(especialidade)}`)
+        .then(res => res.json())
+        .then(data => {
+          data.forEach(p => {
+            const option = document.createElement('option');
+            option.value = p.id;
+            option.textContent = p.nome;
+            profissionalSelect.appendChild(option);
+          });
+        })
+        .catch(error => {
+          mostrarStatus('statusAgendamento', 'Erro ao carregar profissionais.', 'erro');
+          console.error(error);
+        });
+    }
+
+    function carregarDatasDisponiveis() {
+      const profissionalId = document.getElementById('profissional').value;
+      const datasContainer = document.getElementById('datasDisponiveis');
+      const dataConsulta = document.getElementById('dataConsulta');
+      const mensagemDatas = document.getElementById('mensagemDatas');
+
+      datasContainer.innerHTML = '';
+      dataConsulta.value = '';
+
+      if (!profissionalId) {
+        mensagemDatas.textContent = 'Selecione um profissional para visualizar as datas disponíveis.';
+        return;
+      }
+
+      mensagemDatas.textContent = 'Carregando datas disponíveis...';
+
+      fetch(`http://localhost:3000/profissionais/${profissionalId}/datas`)
+        .then(res => res.json())
+        .then(datas => {
+          datasContainer.innerHTML = '';
+
+          if (!datas.length) {
+            mensagemDatas.textContent = 'Não há datas disponíveis para este profissional.';
+            return;
+          }
+
+          mensagemDatas.textContent = 'Selecione uma das datas disponíveis abaixo.';
+
+          datas.forEach(data => {
+            const botao = document.createElement('button');
+            botao.type = 'button';
+            botao.className = 'data-btn';
+            botao.textContent = formatarData(data);
+
+            botao.onclick = () => {
+              document.querySelectorAll('.data-btn').forEach(btn => btn.classList.remove('ativo'));
+              botao.classList.add('ativo');
+              dataConsulta.value = data;
+            };
+
+            datasContainer.appendChild(botao);
+          });
+        })
+        .catch(error => {
+          mostrarStatus('statusAgendamento', 'Erro ao carregar datas disponíveis.', 'erro');
+          console.error(error);
+        });
+    }
+
+    function agendar() {
+      const nome = document.getElementById('nome').value.trim();
+      const cpf = document.getElementById('cpf').value.trim();
+      const profissionalId = document.getElementById('profissional').value;
+      const dataConsulta = document.getElementById('dataConsulta').value;
+
+      limparStatus('statusAgendamento');
+
+      fetch('http://localhost:3000/agendamentos', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ nome, cpf, profissionalId, dataConsulta })
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.erro) {
+          mostrarStatus('statusAgendamento', data.erro, 'erro');
+        } else {
+          mostrarStatus('statusAgendamento', data.mensagem, 'sucesso');
+          mostrarResumoConfirmado(data.agendamento);
+          document.getElementById('nome').value = '';
+          document.getElementById('cpf').value = '';
+          document.getElementById('especialidade').value = '';
+          document.getElementById('profissional').innerHTML = '<option value="">Selecione um profissional</option>';
+          document.getElementById('datasDisponiveis').innerHTML = '';
+          document.getElementById('dataConsulta').value = '';
+          document.getElementById('mensagemDatas').textContent =
+            'Selecione uma especialidade e um profissional para visualizar as datas disponíveis.';
+          carregarListaProfissionais();
+        }
+      })
+      .catch(error => {
+        mostrarStatus('statusAgendamento', 'Erro ao realizar agendamento.', 'erro');
+        console.error(error);
+      });
+    }
+
+    function buscarAgendamentos() {
+      const cpf = document.getElementById('cpfBusca').value.trim();
+
+      fetch(`http://localhost:3000/agendamentos/${encodeURIComponent(cpf)}`)
+        .then(res => res.json())
+        .then(data => {
+          const lista = document.getElementById('listaAgendamentos');
+          lista.innerHTML = '';
+
+          if (!data.length) {
+            mostrarStatus('statusBusca', 'Nenhum agendamento encontrado para esse CPF.', 'erro');
+            return;
+          }
+
+          mostrarStatus('statusBusca', 'Agendamentos encontrados com sucesso.', 'sucesso');
+
+          data.forEach(a => {
+            const li = document.createElement('li');
+            li.innerHTML = `
+              <strong>${a.nome}</strong><br>
+              CPF: ${formatarCPF(a.cpf)}<br>
+              Especialidade: ${a.especialidade}<br>
+              Profissional: ${a.profissional}<br>
+              Data: ${formatarData(a.dataConsulta)}
+              <br><br>
+              <button class="btn-danger" onclick="cancelar(${a.id})">Cancelar agendamento</button>
+            `;
+            lista.appendChild(li);
+          });
+        })
+        .catch(error => {
+          mostrarStatus('statusBusca', 'Erro ao buscar agendamentos.', 'erro');
+          console.error(error);
+        });
+    }
+
+    function cancelar(id) {
+      fetch(`http://localhost:3000/agendamentos/${id}`, {
+        method: 'DELETE'
+      })
+      .then(res => res.json())
+      .then(data => {
+        mostrarStatus('statusBusca', data.mensagem || 'Agendamento cancelado com sucesso.', 'sucesso');
+        document.getElementById('listaAgendamentos').innerHTML = '';
+      })
+      .catch(error => {
+        mostrarStatus('statusBusca', 'Erro ao cancelar agendamento.', 'erro');
+        console.error(error);
+      });
+    }
+
+    carregarEspecialidades();
+    carregarListaProfissionais();
+  </script>
+</body>
+</html>

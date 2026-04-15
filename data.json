@@ -1,0 +1,115 @@
+{
+  "profissionais": [
+    {
+      "id": 1,
+      "nome": "Dr. João Martins",
+      "especialidade": "Clínico Geral",
+      "datasDisponiveis": [
+        "2026-04-20",
+        "2026-04-21",
+        "2026-04-22"
+      ]
+    },
+    {
+      "id": 2,
+      "nome": "Dra. Fernanda Rocha",
+      "especialidade": "Clínico Geral",
+      "datasDisponiveis": [
+        "2026-04-27",
+        "2026-04-28"
+      ]
+    },
+    {
+      "id": 3,
+      "nome": "Dra. Marina Costa",
+      "especialidade": "Nutrição",
+      "datasDisponiveis": [
+        "2026-04-23",
+        "2026-04-24"
+      ]
+    },
+    {
+      "id": 4,
+      "nome": "Dr. Carlos Abreu",
+      "especialidade": "Exames",
+      "datasDisponiveis": [
+        "2026-04-25",
+        "2026-04-26"
+      ]
+    },
+    {
+      "id": 5,
+      "nome": "Dra. Camila Nogueira",
+      "especialidade": "Pediatria",
+      "datasDisponiveis": [
+        "2026-04-29",
+        "2026-04-30"
+      ]
+    },
+    {
+      "id": 6,
+      "nome": "Dr. Rafael Teixeira",
+      "especialidade": "Cardiologia",
+      "datasDisponiveis": [
+        "2026-05-02",
+        "2026-05-03"
+      ]
+    },
+    {
+      "id": 7,
+      "nome": "Dra. Paula Mendes",
+      "especialidade": "Dermatologia",
+      "datasDisponiveis": [
+        "2026-05-04",
+        "2026-05-05"
+      ]
+    },
+    {
+      "id": 8,
+      "nome": "Dr. Eduardo Lima",
+      "especialidade": "Ortopedia",
+      "datasDisponiveis": [
+        "2026-05-06",
+        "2026-05-07"
+      ]
+    },
+    {
+      "id": 9,
+      "nome": "Dra. Juliana Barros",
+      "especialidade": "Ginecologia",
+      "datasDisponiveis": [
+        "2026-05-08",
+        "2026-05-09"
+      ]
+    },
+    {
+      "id": 10,
+      "nome": "Dr. André Soares",
+      "especialidade": "Neurologia",
+      "datasDisponiveis": [
+        "2026-05-10",
+        "2026-05-11"
+      ]
+    }
+  ],
+  "agendamentos": [
+    {
+      "id": 1776276667964,
+      "nome": "Luca Bernard Rocha Furtado",
+      "cpf": "03587351147",
+      "especialidade": "Cardiologia",
+      "profissionalId": 6,
+      "profissional": "Dr. Rafael Teixeira",
+      "dataConsulta": "2026-05-03"
+    },
+    {
+      "id": 1776277206607,
+      "nome": "Luca Bernard Rocha Furtado",
+      "cpf": "03587351147",
+      "especialidade": "Cardiologia",
+      "profissionalId": 6,
+      "profissional": "Dr. Rafael Teixeira",
+      "dataConsulta": "2026-05-02"
+    }
+  ]
+}
