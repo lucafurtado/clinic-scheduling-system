@@ -1,218 +1,137 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const fs = require('fs');
 const path = require('path');
+const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(express.static(path.join(__dirname, '.')));
 
-const dataFile = path.join(__dirname, 'data.json');
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_KEY
+);
 
-function criarDadosIniciais() {
-  return {
-    profissionais: [
-      {
-        id: 1,
-        nome: 'Dr. João Martins',
-        especialidade: 'Clínico Geral',
-        datasDisponiveis: ['2026-04-20', '2026-04-21', '2026-04-22']
-      },
-      {
-        id: 2,
-        nome: 'Dra. Fernanda Rocha',
-        especialidade: 'Clínico Geral',
-        datasDisponiveis: ['2026-04-27', '2026-04-28']
-      },
-      {
-        id: 3,
-        nome: 'Dra. Marina Costa',
-        especialidade: 'Nutrição',
-        datasDisponiveis: ['2026-04-23', '2026-04-24']
-      },
-      {
-        id: 4,
-        nome: 'Dr. Carlos Abreu',
-        especialidade: 'Exames',
-        datasDisponiveis: ['2026-04-25', '2026-04-26']
-      },
-      {
-        id: 5,
-        nome: 'Dra. Camila Nogueira',
-        especialidade: 'Pediatria',
-        datasDisponiveis: ['2026-04-29', '2026-04-30']
-      },
-      {
-        id: 6,
-        nome: 'Dr. Rafael Teixeira',
-        especialidade: 'Cardiologia',
-        datasDisponiveis: ['2026-05-02', '2026-05-03']
-      },
-      {
-        id: 7,
-        nome: 'Dra. Paula Mendes',
-        especialidade: 'Dermatologia',
-        datasDisponiveis: ['2026-05-04', '2026-05-05']
-      },
-      {
-        id: 8,
-        nome: 'Dr. Eduardo Lima',
-        especialidade: 'Ortopedia',
-        datasDisponiveis: ['2026-05-06', '2026-05-07']
-      },
-      {
-        id: 9,
-        nome: 'Dra. Juliana Barros',
-        especialidade: 'Ginecologia',
-        datasDisponiveis: ['2026-05-08', '2026-05-09']
-      },
-      {
-        id: 10,
-        nome: 'Dr. André Soares',
-        especialidade: 'Neurologia',
-        datasDisponiveis: ['2026-05-10', '2026-05-11']
-      }
-    ],
-    agendamentos: []
-  };
-}
+app.get('/especialidades', async (req, res) => {
+  const { data, error } = await supabase
+    .from('profissionais')
+    .select('especialidade');
+  if (error) return res.status(500).json({ erro: error.message });
+  const unicas = [...new Set(data.map(p => p.especialidade))];
+  res.json(unicas);
+});
 
-function lerDados() {
-  if (!fs.existsSync(dataFile)) {
-    fs.writeFileSync(dataFile, JSON.stringify(criarDadosIniciais(), null, 2));
+app.get('/profissionais', async (req, res) => {
+  let query = supabase.from('profissionais').select('*');
+  if (req.query.especialidade) {
+    query = query.ilike('especialidade', req.query.especialidade);
   }
-
-  const conteudo = fs.readFileSync(dataFile, 'utf8');
-  return JSON.parse(conteudo);
-}
-
-function salvarDados(dados) {
-  fs.writeFileSync(dataFile, JSON.stringify(dados, null, 2));
-}
-
-function limparCPF(cpf) {
-  return String(cpf).replace(/\D/g, '');
-}
-
-app.get('/', (req, res) => {
-  res.send('API da Clínica Horizonte Saúde rodando');
+  const { data, error } = await query;
+  if (error) return res.status(500).json({ erro: error.message });
+  res.json(data);
 });
 
-app.get('/especialidades', (req, res) => {
-  const dados = lerDados();
-  const especialidades = [...new Set(dados.profissionais.map(p => p.especialidade))];
-  res.json(especialidades);
+app.get('/profissionais/:id/datas', async (req, res) => {
+  const { data: prof, error } = await supabase
+    .from('profissionais')
+    .select('datas_disponiveis')
+    .eq('id', req.params.id)
+    .single();
+  if (error) return res.status(404).json({ erro: 'Profissional não encontrado.' });
+
+  const { data: agendados } = await supabase
+    .from('agendamentos')
+    .select('data_consulta')
+    .eq('profissional_id', req.params.id);
+
+  const datasOcupadas = new Set((agendados || []).map(a => a.data_consulta));
+  const disponiveis = (prof.datas_disponiveis || []).filter(d => !datasOcupadas.has(d));
+  res.json(disponiveis);
 });
 
-app.get('/profissionais', (req, res) => {
-  const dados = lerDados();
-  const { especialidade } = req.query;
+app.post('/agendamentos', async (req, res) => {
+  const { nome, cpf, telefone, profissionalId, dataConsulta } = req.body;
 
-  let profissionais = dados.profissionais;
-
-  if (especialidade) {
-    profissionais = profissionais.filter(
-      p => p.especialidade.toLowerCase() === especialidade.toLowerCase()
-    );
-  }
-
-  res.json(profissionais);
-});
-
-app.get('/profissionais/:id/datas', (req, res) => {
-  const dados = lerDados();
-  const profissional = dados.profissionais.find(p => p.id == req.params.id);
-
-  if (!profissional) {
-    return res.status(404).json({ erro: 'Profissional não encontrado.' });
-  }
-
-  const datasOcupadas = dados.agendamentos
-    .filter(a => a.profissionalId == profissional.id)
-    .map(a => a.dataConsulta);
-
-  const datasLivres = profissional.datasDisponiveis.filter(
-    data => !datasOcupadas.includes(data)
-  );
-
-  res.json(datasLivres);
-});
-
-app.post('/agendamentos', (req, res) => {
-  const { nome, cpf, profissionalId, dataConsulta } = req.body;
-
-  if (!nome || !cpf || !profissionalId || !dataConsulta) {
+  if (!nome || !cpf || !telefone || !profissionalId || !dataConsulta) {
     return res.status(400).json({ erro: 'Preencha todos os campos obrigatórios.' });
   }
 
-  const cpfLimpo = limparCPF(cpf);
-
+  const cpfLimpo = String(cpf).replace(/\D/g, '');
   if (!/^\d{11}$/.test(cpfLimpo)) {
     return res.status(400).json({ erro: 'CPF deve ter 11 dígitos, com ou sem formatação.' });
   }
 
-  const dados = lerDados();
-  const profissional = dados.profissionais.find(p => p.id == profissionalId);
+  const { data: prof, error: errProf } = await supabase
+    .from('profissionais')
+    .select('*')
+    .eq('id', profissionalId)
+    .single();
+  if (errProf) return res.status(404).json({ erro: 'Profissional não encontrado.' });
 
-  if (!profissional) {
-    return res.status(404).json({ erro: 'Profissional não encontrado.' });
-  }
-
-  const dataExisteParaProfissional = profissional.datasDisponiveis.includes(dataConsulta);
-  if (!dataExisteParaProfissional) {
+  if (!prof.datas_disponiveis.includes(dataConsulta)) {
     return res.status(400).json({ erro: 'Essa data não existe para o profissional selecionado.' });
   }
 
-  const conflito = dados.agendamentos.find(
-    a => a.profissionalId == profissionalId && a.dataConsulta === dataConsulta
-  );
+  const { data: ocupado } = await supabase
+    .from('agendamentos')
+    .select('id')
+    .eq('profissional_id', profissionalId)
+    .eq('data_consulta', dataConsulta)
+    .maybeSingle();
 
-  if (conflito) {
+  if (ocupado) {
     return res.status(400).json({ erro: 'Essa data já foi reservada para esse profissional.' });
   }
 
-  const novoAgendamento = {
-    id: Date.now(),
-    nome,
-    cpf: cpfLimpo,
-    especialidade: profissional.especialidade,
-    profissionalId: profissional.id,
-    profissional: profissional.nome,
-    dataConsulta
-  };
+  const { data, error } = await supabase
+    .from('agendamentos')
+    .insert({ nome, cpf: cpfLimpo, telefone, profissional_id: profissionalId, data_consulta: dataConsulta })
+    .select()
+    .single();
 
-  dados.agendamentos.push(novoAgendamento);
-  salvarDados(dados);
+  if (error) return res.status(500).json({ erro: error.message });
 
   res.status(201).json({
     mensagem: 'Agendamento realizado com sucesso.',
-    agendamento: novoAgendamento
+    agendamento: {
+      ...data,
+      especialidade: prof.especialidade,
+      profissional: prof.nome,
+      dataConsulta: data.data_consulta
+    }
   });
 });
 
-app.get('/agendamentos/:cpf', (req, res) => {
-  const cpfBuscado = limparCPF(req.params.cpf);
-  const dados = lerDados();
-  const encontrados = dados.agendamentos.filter(a => a.cpf === cpfBuscado);
-  res.json(encontrados);
+app.get('/agendamentos/:cpf', async (req, res) => {
+  const cpfLimpo = req.params.cpf.replace(/\D/g, '');
+  const { data, error } = await supabase
+    .from('agendamentos')
+    .select('*, profissionais(nome, especialidade)')
+    .eq('cpf', cpfLimpo);
+  if (error) return res.status(500).json({ erro: error.message });
+
+  const resultado = (data || []).map(a => ({
+    ...a,
+    especialidade: a.profissionais?.especialidade,
+    profissional: a.profissionais?.nome,
+    dataConsulta: a.data_consulta
+  }));
+
+  res.json(resultado);
 });
 
-app.delete('/agendamentos/:id', (req, res) => {
-  const { id } = req.params;
-  const dados = lerDados();
-
-  const index = dados.agendamentos.findIndex(a => a.id == id);
-
-  if (index === -1) {
-    return res.status(404).json({ erro: 'Agendamento não encontrado.' });
-  }
-
-  dados.agendamentos.splice(index, 1);
-  salvarDados(dados);
-
+app.delete('/agendamentos/:id', async (req, res) => {
+  const { error } = await supabase
+    .from('agendamentos')
+    .delete()
+    .eq('id', req.params.id);
+  if (error) return res.status(500).json({ erro: error.message });
   res.json({ mensagem: 'Agendamento cancelado com sucesso.' });
 });
 
-app.listen(3000, () => {
-  console.log('Servidor rodando na porta 3000');
-});
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Servidor rodando na porta ${PORT}`));
+
+module.exports = app;

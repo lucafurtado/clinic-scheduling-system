@@ -63,6 +63,11 @@
           <input id="cpf" type="text" placeholder="Digite seu CPF">
         </div>
 
+        <div class="form-group">
+          <label for="telefone">Telefone</label>
+          <input id="telefone" type="tel" placeholder="(00) 00000-0000" maxlength="15">
+        </div>
+
         <button class="btn-primary" onclick="agendar()">Confirmar agendamento</button>
         <div id="statusAgendamento" class="status"></div>
       </section>
@@ -140,7 +145,7 @@
     }
 
     function carregarEspecialidades() {
-      fetch('http://localhost:3000/especialidades')
+      fetch('/especialidades')
         .then(res => res.json())
         .then(data => {
           const select = document.getElementById('especialidade');
@@ -160,7 +165,7 @@
     }
 
     function carregarListaProfissionais() {
-      fetch('http://localhost:3000/profissionais')
+      fetch('/profissionais')
         .then(res => res.json())
         .then(data => {
           const lista = document.getElementById('listaProfissionais');
@@ -198,7 +203,7 @@
 
       mensagemDatas.textContent = 'Selecione um profissional para visualizar as datas disponíveis.';
 
-      fetch(`http://localhost:3000/profissionais?especialidade=${encodeURIComponent(especialidade)}`)
+      fetch(`/profissionais?especialidade=${encodeURIComponent(especialidade)}`)
         .then(res => res.json())
         .then(data => {
           data.forEach(p => {
@@ -230,7 +235,7 @@
 
       mensagemDatas.textContent = 'Carregando datas disponíveis...';
 
-      fetch(`http://localhost:3000/profissionais/${profissionalId}/datas`)
+      fetch(`/profissionais/${profissionalId}/datas`)
         .then(res => res.json())
         .then(datas => {
           datasContainer.innerHTML = '';
@@ -266,17 +271,18 @@
     function agendar() {
       const nome = document.getElementById('nome').value.trim();
       const cpf = document.getElementById('cpf').value.trim();
+      const telefone = document.getElementById('telefone').value.trim();
       const profissionalId = document.getElementById('profissional').value;
       const dataConsulta = document.getElementById('dataConsulta').value;
 
       limparStatus('statusAgendamento');
 
-      fetch('http://localhost:3000/agendamentos', {
+      fetch('/agendamentos', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ nome, cpf, profissionalId, dataConsulta })
+        body: JSON.stringify({ nome, cpf, telefone, profissionalId, dataConsulta })
       })
       .then(res => res.json())
       .then(data => {
@@ -287,6 +293,7 @@
           mostrarResumoConfirmado(data.agendamento);
           document.getElementById('nome').value = '';
           document.getElementById('cpf').value = '';
+          document.getElementById('telefone').value = '';
           document.getElementById('especialidade').value = '';
           document.getElementById('profissional').innerHTML = '<option value="">Selecione um profissional</option>';
           document.getElementById('datasDisponiveis').innerHTML = '';
@@ -305,7 +312,7 @@
     function buscarAgendamentos() {
       const cpf = document.getElementById('cpfBusca').value.trim();
 
-      fetch(`http://localhost:3000/agendamentos/${encodeURIComponent(cpf)}`)
+      fetch(`/agendamentos/${encodeURIComponent(cpf)}`)
         .then(res => res.json())
         .then(data => {
           const lista = document.getElementById('listaAgendamentos');
@@ -327,7 +334,7 @@
               Profissional: ${a.profissional}<br>
               Data: ${formatarData(a.dataConsulta)}
               <br><br>
-              <button class="btn-danger" onclick="cancelar(${a.id})">Cancelar agendamento</button>
+              <button class="btn-danger" data-id="${a.id}" onclick="cancelar(this.dataset.id)">Cancelar agendamento</button>
             `;
             lista.appendChild(li);
           });
@@ -339,7 +346,7 @@
     }
 
     function cancelar(id) {
-      fetch(`http://localhost:3000/agendamentos/${id}`, {
+      fetch(`/agendamentos/${id}`, {
         method: 'DELETE'
       })
       .then(res => res.json())
