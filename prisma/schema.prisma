@@ -1,0 +1,35 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Profissional {
+  id               Int           @id @default(autoincrement())
+  nome             String
+  especialidade    String
+  datasDisponiveis DateTime[]    @map("datas_disponiveis") @db.Date
+  agendamentos     Agendamento[]
+
+  @@map("profissionais")
+}
+
+model Agendamento {
+  id             Int          @id @default(autoincrement())
+  nome           String
+  cpf            String
+  telefone       String
+  profissionalId Int          @map("profissional_id")
+  profissional   Profissional @relation(fields: [profissionalId], references: [id])
+  dataConsulta   DateTime     @map("data_consulta") @db.Date
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  // Fecha de vez a condição de corrida no agendamento (ver relatório da Fase 0/limitações):
+  // duas requisições simultâneas para a mesma data+profissional não conseguem mais
+  // resultar em dois agendamentos — a segunda falha com um erro de constraint,
+  // que o service traduz para a mesma resposta 400 de "já foi reservada".
+  @@unique([profissionalId, dataConsulta])
+  @@map("agendamentos")
+}

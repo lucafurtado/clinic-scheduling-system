@@ -1,0 +1,36 @@
+services:
+  app:
+    build: .
+    ports:
+      - '3000:3000'
+    env_file:
+      - .env
+    environment:
+      # Ainda não usada pelo app (chega na Fase 3, com Prisma). Já deixamos
+      # o Postgres local disponível para não depender do Supabase remoto no dev.
+      DATABASE_URL: postgresql://horizonte:horizonte@db:5432/horizonte_saude
+    volumes:
+      - .:/app
+      - /app/node_modules
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: horizonte
+      POSTGRES_PASSWORD: horizonte
+      POSTGRES_DB: horizonte_saude
+    ports:
+      - '5432:5432'
+    volumes:
+      - horizonte_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U horizonte -d horizonte_saude']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  horizonte_pgdata:

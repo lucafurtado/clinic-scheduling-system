@@ -14,7 +14,9 @@ A aplicação simula um sistema de agendamento para uma clínica de saúde, perm
 - consulte agendamentos por CPF
 - cancele um agendamento
 
-Os dados são armazenados localmente em **JSON**, conforme solicitado na atividade.
+> **Nota (em evolução):** este projeto está sendo evoluído de um MVP acadêmico para uma plataforma de portfólio completa (TypeScript, Prisma, autenticação, multi-clínica, deploy em produção, etc.). A stack e a estrutura de pastas abaixo refletem o estado **atual** do código, não o estado final planejado.
+
+Os dados são armazenados em um banco **PostgreSQL gerenciado (Supabase)**, acessado via `@supabase/supabase-js`. O armazenamento local em JSON descrito nas seções abaixo foi o desenho original da atividade acadêmica e não reflete mais o comportamento atual do `server.js`.
 
 ## Funcionalidades implementadas
 
@@ -51,3 +53,4 @@ Clínica
 │   ├── index.html
 │   └── style.css
 └── README.md
+```
