@@ -1,66 +1,249 @@
-# Clínica Horizonte Saúde
+# Horizonte Saúde
 
-Projeto acadêmico (Desenvolvimento de Soluções para Clínica de Saúde) em evolução para uma
-plataforma de portfólio multi-clínica: agendamento com reserva de horário, cobrança via Stripe,
-confirmação por e-mail e atualização de disponibilidade em tempo real.
+Plataforma de agendamento multi-clínica: paciente reserva um horário, paga online para confirmar,
+recebe e-mail de confirmação e a agenda atualiza em tempo real para qualquer outra pessoa olhando
+o mesmo profissional. Evoluída de um MVP acadêmico (front-end estático + `server.js` + JSON local)
+para uma stack TypeScript/Prisma/PostgreSQL com autenticação delegada, isolamento real entre
+clínicas e deploy em produção.
 
-> Este README documenta o estado **atual** do código (TypeScript, Express 5, Prisma/PostgreSQL,
-> Stripe, Socket.io, Nodemailer, autenticação via um serviço externo chamado AccessCore). A seção
-> "Estrutura do projeto" antiga (Backend/Frontend em JS puro com JSON local) descrevia a primeira
-> versão acadêmica e não reflete mais a stack.
+**App em produção:** https://horizonte-saude-api.onrender.com _(free tier — o primeiro request
+após um tempo sem uso pode levar 30-60s para "acordar" o servidor)_
+**Repositório:** https://github.com/lucafurtado/clinic-scheduling-system
 
 ## Sumário
 
+- [Visão de negócio](#visão-de-negócio)
 - [Arquitetura](#arquitetura)
+- [Stack](#stack)
+- [Decisões técnicas](#decisões-técnicas)
 - [Funcionalidades](#funcionalidades)
-- [Variáveis de ambiente](#variáveis-de-ambiente)
+- [Multi-tenancy](#multi-tenancy)
+- [Autenticação via AccessCore](#autenticação-via-accesscore)
+- [Pagamentos (Stripe)](#pagamentos-stripe)
+- [Tempo real (Socket.io)](#tempo-real-socketio)
+- [E-mail transacional](#e-mail-transacional)
+- [Testes](#testes)
 - [Rodando localmente](#rodando-localmente-sem-docker)
-- [Rodando via Docker](#rodando-via-docker-recomendado)
-- [Testes, typecheck, lint e format](#testes-typecheck-lint-e-format)
-- [Configurando o Stripe (modo sandbox)](#configurando-o-stripe-modo-sandbox)
-- [Validando o webhook com o Stripe CLI](#validando-o-webhook-com-o-stripe-cli)
-- [Como funciona o fluxo de pagamento, e-mail e tempo real](#como-funciona-o-fluxo-de-pagamento-e-mail-e-tempo-real)
+- [Rodando via Docker](#rodando-via-docker)
+- [Deploy](#deploy)
+- [Variáveis de ambiente](#variáveis-de-ambiente)
 - [Rotas da API](#rotas-da-api)
+- [Roadmap futuro](#roadmap-futuro)
+- [Capturas de tela](#capturas-de-tela)
+
+## Visão de negócio
+
+Clínicas pequenas perdem receita de duas formas específicas que este projeto ataca diretamente:
+
+- **No-show sem custo para o paciente** — reservar não custa nada, então cancelar (ou simplesmente
+  não aparecer) também não custa nada. Exigir uma reserva de horário paga na hora de agendar muda
+  esse incentivo sem precisar de um sistema de cobrança manual.
+- **Agenda desatualizada entre quem está olhando ao mesmo tempo** — sem tempo real, dois pacientes
+  podem estar vendo a mesma data "disponível" simultaneamente; um deles vai descobrir que perdeu o
+  horário só depois de tentar confirmar.
+
+O produto é pensado para **múltiplas clínicas na mesma plataforma** (não uma instância por
+cliente): cada clínica tem sua própria URL (`/clinicas/:slug`), sua própria equipe, seus próprios
+profissionais e pacientes — sem ver nada da clínica vizinha. Uma segunda clínica de exemplo
+(`vida-plena`) existe nos dados de seed exatamente para provar esse isolamento, não só descrevê-lo.
 
 ## Arquitetura
 
-Camadas: `routes` → `controllers` → `services` → `repositories` (Prisma). Multi-tenant por
-`clinicaSlug` na URL (`/clinicas/:clinicaSlug/...`), resolvido pelo middleware
-[resolveClinica](src/middleware/resolveClinica.ts) e propagado como `req.clinica`. Autenticação
-administrativa delega para um serviço externo de identidade (AccessCore); um usuário só age sobre
-uma clínica se houver um registro de `Membro` associando-o a ela (ver `prisma/schema.prisma`).
+Camadas: **routes → controllers → services → repositories → Prisma/PostgreSQL**. Cada camada só
+conhece a de baixo; a lógica de negócio (services) não sabe nada sobre Express, e os repositories
+não sabem nada sobre regras de negócio — só executam queries.
+
+```mermaid
+flowchart TB
+    subgraph Cliente
+        Browser["Navegador (index.html + JS)"]
+    end
+
+    subgraph "Horizonte Saúde (Node/Express)"
+        API["routes → controllers → services → repositories"]
+        Socket["Socket.io"]
+    end
+
+    subgraph Externos
+        AccessCore["AccessCore\n(identidade, fora deste repo)"]
+        Stripe["Stripe Checkout\n(sandbox)"]
+        SMTP["SMTP\n(Resend / Ethereal)"]
+    end
+
+    DB[("PostgreSQL")]
+
+    Browser -- "REST + WebSocket" --> API
+    Browser <-. "datas:atualizadas" .-> Socket
+    API --> DB
+    API -- "login / validar token" --> AccessCore
+    API -- "criar sessão de checkout" --> Stripe
+    Stripe -- "webhook assinado" --> API
+    API -- "confirmação / cancelamento" --> SMTP
+    API --> Socket
+```
+
+Um middleware (`resolveClinica`) resolve `:clinicaSlug` no início de toda rota de negócio e
+popula `req.clinica` — nenhum controller/service abaixo dele precisa saber que multi-tenancy
+existe, só recebe um `clinicaId` já resolvido e validado (404 antes de qualquer outra coisa se o
+slug não existir).
+
+## Stack
+
+| Camada        | Escolha                                                                                 | Por quê                                                                                                                                                                                                      |
+| ------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Linguagem     | TypeScript                                                                              | Tipagem de ponta a ponta entre schema (Prisma), services e controllers — a maioria dos bugs de "campo errado" vira erro de compilação, não de runtime.                                                       |
+| Web framework | Express 5                                                                               | Suporte nativo a handlers `async` (erros em promises chegam ao `errorHandler` sem `try/catch` manual em cada rota) — motivo real de não ter ficado no Express 4.                                             |
+| ORM           | Prisma 7 (`@prisma/adapter-pg`)                                                         | Migrations versionadas, client com tipos gerados do schema, e o adapter `pg` evita o driver Rust anterior do Prisma.                                                                                         |
+| Banco         | PostgreSQL 16                                                                           | Constraints únicas compostas (`profissionalId+dataConsulta`, `clinicaId+cpf`) fazem o banco fechar condições de corrida que o código sozinho não fecharia de forma confiável.                                |
+| Identidade    | AccessCore (serviço externo, [repo próprio](https://github.com/lucafurtado/accesscore)) | Login, RBAC e emissão/validação de token não são o domínio deste projeto — delegar evita reimplementar autenticação (e os bugs de segurança que vêm junto) numa segunda vez.                                 |
+| Pagamentos    | Stripe Checkout (modo sandbox)                                                          | Checkout hospedado pelo Stripe — nenhum dado de cartão passa por este backend.                                                                                                                               |
+| Tempo real    | Socket.io                                                                               | Fallback automático para long-polling quando WebSocket não está disponível (proxies corporativos, etc.), sem código extra.                                                                                   |
+| E-mail        | Nodemailer + Ethereal (dev) / Resend (produção)                                         | Nodemailer é agnóstico de provedor — trocar de Ethereal para Resend é só configuração, sem mudar código.                                                                                                     |
+| Logging       | pino / pino-http                                                                        | JSON estruturado em produção (consumível por qualquer agregador de log), pretty-print em dev.                                                                                                                |
+| Testes        | Jest + Supertest, `ts-jest`                                                             | Testes de integração reais contra Postgres (não mocks de banco) — só AccessCore/Stripe/e-mail são mockados, por serem serviços externos.                                                                     |
+| Deploy        | Render (Web Service + PostgreSQL)                                                       | Processo Node persistente — necessário para conexões WebSocket do Socket.io, que não sobrevivem bem a um modelo serverless tradicional (motivo pelo qual o `vercel.json` original foi removido; ver Deploy). |
+
+## Decisões técnicas
+
+Um resumo das decisões que não são óbvias só de ler o código (o racional completo de cada uma
+está comentado no arquivo correspondente):
+
+- **Reserva "trava" o horário antes do pagamento ser confirmado.** O agendamento é criado com
+  status `PENDENTE_PAGAMENTO` e já ocupa a vaga (a constraint única não distingue status) — a
+  alternativa (só reservar depois do pagamento confirmado) permitiria dois pacientes pagarem pelo
+  mesmo horário em paralelo, com um dos dois tendo que ser estornado depois.
+- **Falha ao criar a sessão de pagamento libera a vaga imediatamente**, em vez de deixar um
+  `PENDENTE_PAGAMENTO` órfão. Bug real encontrado e corrigido durante a validação deste projeto —
+  ver [Bugs encontrados](#bugs-encontrados-e-como-foram-resolvidos) no relatório do checkpoint.
+- **Webhook do Stripe usa `express.raw()`, montado antes do `express.json()` global.** A
+  verificação de assinatura (`stripe.webhooks.constructEvent`) precisa dos bytes crus do corpo —
+  um body já reparseado pelo `express.json()` invalidaria a assinatura.
+- **Confirmação de pagamento é idempotente.** O Stripe pode reenviar o mesmo evento de webhook
+  mais de uma vez (contrato deles, não uma falha) — se o pagamento já está `CONFIRMADO`, o handler
+  não reprocessa (não reenvia e-mail, não emite Socket.io de novo).
+- **CPF é único por clínica, não globalmente.** O mesmo CPF pode ser um paciente diferente (registro
+  diferente) em outra clínica — é o mesmo isolamento de tenant aplicado até o nível de dado.
+- **CSP do Helmet está desligada deliberadamente.** O front-end atual usa `<script>` inline e
+  atributos `onclick="..."` — a CSP padrão bloquearia os dois e quebraria a aplicação. Documentado
+  como troca consciente (ver `src/app.ts`), não como um item esquecido.
+- **`npm run build` compila `prisma/seed.ts` separadamente** (`prisma/tsconfig.seed.json` →
+  `dist/prisma/seed.js`), fora do `tsconfig.json` principal. Motivo: rodar o seed em produção não
+  pode depender de `tsx`, que é uma devDependency ausente num install de produção (bug real
+  encontrado no primeiro deploy — ver relatório do checkpoint).
+- **`prisma`, `typescript` e os pacotes `@types/*` usados pelo código-fonte vivem em
+  `dependencies`, não `devDependencies`.** Plataformas de deploy costumam pular devDependencies
+  quando `NODE_ENV=production` — sem isso, o build de produção falha (outro bug real, mesmo
+  relatório).
 
 ## Funcionalidades
 
 - Listagem de especialidades e profissionais por clínica
-- Reserva de horário com cobrança via **Stripe Checkout** (modo sandbox)
-- Confirmação de agendamento assíncrona via **webhook do Stripe**, com liberação automática do
-  horário se o pagamento expirar/falhar
-- **E-mail transacional** de confirmação e cancelamento (Nodemailer)
-- **Atualização em tempo real** (Socket.io) da grade de horários quando alguém reserva, paga ou
-  cancela
-- Área administrativa (login/gestão de profissionais/cancelamento pela equipe), autenticada via
-  AccessCore
-- Isolamento multi-clínica de ponta a ponta (dados, autenticação, tempo real)
+- Consulta de datas disponíveis por profissional (já descontando o que está reservado)
+- Reserva de horário com cobrança via Stripe Checkout
+- Confirmação automática do agendamento quando o pagamento é aprovado (via webhook)
+- Liberação automática do horário se o pagamento expirar ou falhar
+- Cancelamento pelo paciente (via CPF) ou pela equipe da clínica (autenticada)
+- E-mail de confirmação e de cancelamento
+- Atualização em tempo real da grade de horários (Socket.io)
+- Login/administração da clínica via AccessCore, com RBAC por permissão
+- Isolamento completo entre clínicas (dados, autenticação, tempo real)
 
-## Variáveis de ambiente
+## Multi-tenancy
 
-Copie `.env.example` para `.env` e ajuste. Referência completa (todas as variáveis já têm um
-comentário explicativo em `.env.example`):
+Toda rota de negócio vive sob `/clinicas/:clinicaSlug/...`. O middleware `resolveClinica`
+(`src/middleware/resolveClinica.ts`) resolve o slug para uma `Clinica` real (404 se não existir) e
+anexa `req.clinica` — a partir daí, todo repository filtra por `clinicaId` explicitamente (nunca um
+`findUnique` só por id de um recurso filho, sempre `findFirst({ where: { id, clinicaId } })`), o
+que fecha a possibilidade de vazamento cross-tenant mesmo que alguém adivinhe o id de um recurso de
+outra clínica.
 
-| Variável                                                                            | Obrigatória                    | Descrição                                                                                                                                                                                                                                      |
-| ----------------------------------------------------------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PORT`                                                                              | não (default `3000`)           | Porta HTTP do servidor.                                                                                                                                                                                                                        |
-| `DATABASE_URL`                                                                      | sim                            | Conexão PostgreSQL. Local: `localhost:5434`; dentro do Docker Compose: `db:5432` (o compose já sobrescreve isso).                                                                                                                              |
-| `ALLOWED_ORIGINS`                                                                   | não                            | Origens liberadas para CORS, separadas por vírgula. Vazio = CORS fechado (adequado hoje, front e back são same-origin).                                                                                                                        |
-| `ACCESSCORE_URL`                                                                    | sim                            | Base URL da instância do AccessCore (provedor de identidade), usada pelas rotas administrativas.                                                                                                                                               |
-| `ACCESSCORE_ADMIN_EMAIL` / `ACCESSCORE_ADMIN_PASSWORD`                              | não                            | Só usadas por `scripts/bootstrap-accesscore.ts`, não lidas em runtime pela aplicação.                                                                                                                                                          |
-| `APP_BASE_URL`                                                                      | sim                            | URL pública desta aplicação, usada para montar `success_url`/`cancel_url` do Stripe Checkout.                                                                                                                                                  |
-| `STRIPE_SECRET_KEY`                                                                 | sim, para o fluxo de pagamento | Chave secreta do Stripe (modo teste: `sk_test_...`). Sem ela, criar uma reserva falha com 500 controlado (ver [Configurando o Stripe](#configurando-o-stripe-modo-sandbox)).                                                                   |
-| `STRIPE_WEBHOOK_SECRET`                                                             | sim, para confirmar pagamentos | Segredo (`whsec_...`) usado para validar a assinatura do webhook.                                                                                                                                                                              |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` | não                            | Sem `SMTP_HOST`, o serviço de e-mail cria automaticamente uma conta de teste no [Ethereal](https://ethereal.email/) — nenhum e-mail real é enviado, mas o fluxo roda de ponta a ponta e a URL de preview do e-mail aparece no log do servidor. |
+O vínculo entre um usuário do AccessCore e uma clínica vive inteiramente neste banco (modelo
+`Membro`) — o AccessCore não sabe (nem precisa saber) o que é uma "clínica"; essa fronteira de
+domínio é responsabilidade só deste serviço.
 
-Nunca commite um `.env` com chaves reais. `.env` já está no `.gitignore`.
+## Autenticação via AccessCore
+
+A área administrativa (`/admin/*`) não reimplementa login: delega para o
+[AccessCore](https://github.com/lucafurtado/accesscore), um serviço de identidade genérico
+(`https://accesscore-backend.onrender.com`, [docs](https://accesscore-backend.onrender.com/docs)).
+
+Fluxo: `POST /clinicas/:slug/auth/login` chama o AccessCore, recebe um token, busca as permissões
+efetivas do usuário e confere se existe um `Membro` ligando esse usuário a esta clínica (senão,
+403 mesmo com credenciais válidas — login certo não significa acesso a _esta_ clínica). O refresh
+token vai num cookie `httpOnly`, escopado por clínica (`path: /clinicas/:slug/auth`), para que o
+mesmo navegador possa manter sessões independentes em clínicas diferentes.
+
+Cada rota administrativa exige uma permissão específica (`profissionais:manage`,
+`agendamentos:manage`) verificada contra o retorno do AccessCore — nenhum JWT é decodificado
+localmente; a validação (assinatura, expiração, usuário ativo) e a resolução de permissões
+acontecem sempre no próprio AccessCore, então revogar uma role lá já vale aqui na próxima
+requisição, sem esperar o token expirar.
+
+## Pagamentos (Stripe)
+
+Ver a explicação completa do fluxo (reserva → checkout → webhook → confirmação/e-mail/tempo real)
+em [Decisões técnicas](#decisões-técnicas) acima. Para configurar credenciais de teste e validar
+webhooks com o Stripe CLI:
+
+1. Crie uma conta Stripe e pegue a chave secreta de **teste** em
+   [dashboard.stripe.com/test/apikeys](https://dashboard.stripe.com/test/apikeys) (`sk_test_...`).
+   Modo sandbox — nenhuma cobrança real.
+2. Configure `STRIPE_SECRET_KEY` e `APP_BASE_URL` (ver [Variáveis de ambiente](#variáveis-de-ambiente)).
+3. Sem `STRIPE_WEBHOOK_SECRET`, o checkout é criado normalmente mas a confirmação (que depende do
+   webhook) não acontece. Para validar isso:
+   ```bash
+   stripe login
+   stripe listen --forward-to localhost:3000/webhooks/stripe
+   # copie o whsec_... impresso para STRIPE_WEBHOOK_SECRET, reinicie a app
+   stripe trigger checkout.session.completed
+   # ou: reserve um horário pela app, pague no checkoutUrl com 4242 4242 4242 4242
+   stripe trigger checkout.session.expired   # simula pagamento não concluído
+   ```
+
+**Sem `STRIPE_SECRET_KEY` configurada** (o estado padrão deste repo — nenhuma chave fictícia é
+usada), criar uma reserva falha com `500 Erro interno do servidor`, controlado — o horário não fica
+preso (ver [Decisões técnicas](#decisões-técnicas)). É o comportamento validado tanto localmente
+quanto no deploy de produção.
+
+## Tempo real (Socket.io)
+
+Cada cliente entra numa sala `clinica:<slug>:profissional:<id>` ao selecionar um profissional
+(`src/realtime/socket.ts`). Reservar, confirmar pagamento, cancelar ou uma reserva expirar — tudo
+isso emite `datas:atualizadas` só para quem está na sala daquele profissional específico (não um
+broadcast geral), mantendo o mesmo isolamento de tenant também em tempo real.
+
+## E-mail transacional
+
+`src/services/emailService.ts`: sem `SMTP_HOST` configurada, cria automaticamente uma conta de
+teste [Ethereal](https://ethereal.email/) — nenhum e-mail real é enviado, mas o fluxo roda de
+ponta a ponta e a URL de preview aparece no log do servidor. Uma falha de envio nunca derruba o
+fluxo que a disparou (reserva/cancelamento continuam válidos mesmo se o e-mail falhar) — só é
+logada. Em produção, configurar `SMTP_*` para um provedor real (recomendado: Resend).
+
+## Testes
+
+```bash
+npm test            # suíte completa (Jest + Supertest)
+npm run typecheck    # tsc --noEmit
+npm run lint          # eslint .
+npm run format:check  # prettier --check .
+```
+
+AccessCore, Stripe e o provedor de e-mail são mockados na borda (`tests/jest.setup.ts` e os
+`jest.mock(...)` no topo de cada arquivo) — a suíte não depende de nenhum serviço externo real,
+nem de credenciais. O resto (banco de dados, regras de negócio, isolamento multi-tenant, RBAC) roda
+de ponta a ponta contra um Postgres real.
+
+Depende de um Postgres alcançável na porta `5434` (local ou via `docker compose up db`):
+
+```bash
+docker compose exec db psql -U horizonte -d horizonte_saude -c "CREATE DATABASE horizonte_saude_test;"
+DATABASE_URL="postgresql://horizonte:horizonte@localhost:5434/horizonte_saude_test" npx prisma migrate deploy
+```
+
+`jest` roda com `maxWorkers: 1`: os três arquivos de teste compartilham o mesmo banco físico e cada
+um reseta as tabelas entre casos — rodar em paralelo (o padrão do Jest) causa violação de foreign
+key entre suítes concorrentes.
 
 ## Rodando localmente (sem Docker)
 
@@ -69,160 +252,108 @@ Pré-requisitos: Node 22+, um PostgreSQL acessível (ex.: `docker compose up db`
 ```bash
 npm install
 cp .env.example .env          # ajuste DATABASE_URL etc.
-npm run prisma:migrate        # aplica as migrations (cria o schema)
+npm run prisma:migrate        # aplica as migrations
 npm run prisma:seed           # popula duas clínicas de exemplo
 npm run dev                   # tsx watch — http://localhost:3000
 ```
 
-## Rodando via Docker (recomendado)
-
-Sobe a aplicação **e** o PostgreSQL, com hot-reload (bind mount do código-fonte):
+## Rodando via Docker
 
 ```bash
 docker compose up --build -V   # -V força recriar o volume anônimo do node_modules
-```
-
-Na primeira vez (banco vazio), aplique as migrations e o seed dentro do container da app:
-
-```bash
-docker compose exec app npx prisma migrate deploy
+docker compose exec app npx prisma migrate deploy   # primeira vez (banco vazio)
 docker compose exec app npx prisma db seed
 ```
 
-A aplicação fica em `http://localhost:3000` e o Postgres exposto em `localhost:5434` (útil para
-rodar `npm test`/Prisma Studio a partir do host enquanto o banco vive no container). Para derrubar
-tudo (incluindo os dados do Postgres): `docker compose down -v`.
+App em `http://localhost:3000`, Postgres exposto em `localhost:5434` (para rodar `npm test`/Prisma
+Studio do host enquanto o banco vive no container). `docker compose down -v` derruba tudo,
+incluindo os dados.
 
-## Testes, typecheck, lint e format
+## Deploy
 
-```bash
-npm test            # jest — suíte completa (usa DATABASE_URL de tests/jest.setup.ts, banco *_test*)
-npm run typecheck    # tsc --noEmit
-npm run lint          # eslint .
-npm run format:check  # prettier --check .
-```
+Deploy atual: **Render** — Web Service (Node, plano free) + PostgreSQL (plano free, mesma região).
+Motivo de não ser Vercel (a plataforma usada na primeira versão deste projeto, ver o
+`vercel.json` removido no histórico): o modelo serverless da Vercel não sustenta as conexões
+WebSocket persistentes que o Socket.io precisa — um Web Service com processo Node contínuo, como o
+do Render, é necessário para o tempo real funcionar de verdade em produção, não só localmente.
 
-A suíte depende de um PostgreSQL alcançável (local ou o do `docker compose up db`, porta `5434`) e
-cria o banco de testes automaticamente na primeira execução via
-`TEST_DATABASE_URL`/`DATABASE_URL` (ver `tests/jest.setup.ts`) — crie-o manualmente se necessário:
+Este repositório inclui um [render.yaml](render.yaml) (Blueprint) com a mesma configuração usada em
+produção — a forma mais simples de reproduzir o deploy é:
 
-```bash
-docker compose exec db psql -U horizonte -d horizonte_saude -c "CREATE DATABASE horizonte_saude_test;"
-DATABASE_URL="postgresql://horizonte:horizonte@localhost:5434/horizonte_saude_test" npx prisma migrate deploy
-```
+1. Em [dashboard.render.com](https://dashboard.render.com) → **New +** → **Blueprint** → conecte
+   este repositório. O Render detecta o `render.yaml` e provisiona o Web Service + o Postgres.
+2. Preencha as variáveis marcadas `sync: false` (`APP_BASE_URL` — a URL que o Render atribuir ao
+   serviço; `STRIPE_SECRET_KEY`/`STRIPE_WEBHOOK_SECRET`/`SMTP_*` se/quando disponíveis) direto no
+   dashboard — nunca ficam commitadas.
+3. `npm start` (`prisma migrate deploy && node dist/server.js`) aplica as migrations pendentes
+   automaticamente a cada deploy — não é um passo manual separado.
+4. Popular o banco de produção pela primeira vez: como o plano free do Render não inclui _one-off
+   jobs_, o seed foi rodado apontando temporariamente o _start command_ do serviço para
+   `... && node dist/prisma/seed.js && node dist/server.js` por um deploy, e revertido em seguida
+   — documentado em detalhe no relatório do Checkpoint 5.
 
-AccessCore, Stripe e o provedor de e-mail são **mockados na borda** nos testes (ver
-`tests/jest.setup.ts` e os `jest.mock(...)` no topo de cada arquivo de teste) — a suíte não depende
-de nenhum serviço externo real, nem de uma `STRIPE_SECRET_KEY`.
+**Nota sobre o plano free:** o Postgres free do Render expira automaticamente 30 dias após a
+criação (é preciso recriar o banco — ou migrar para um plano pago — antes disso para não perder os
+dados); o Web Service free "dorme" após 15 minutos sem tráfego (mesmo trade-off já aceito hoje pelo
+AccessCore, que roda no mesmo tipo de plano).
 
-`jest` está configurado com `maxWorkers: 1`: os três arquivos de teste compartilham o mesmo banco
-de dados físico e cada um faz `deleteMany()`/recria as tabelas entre casos — rodar os arquivos em
-paralelo (o padrão do Jest) causa violação de foreign key entre suítes concorrentes. Isolar por
-schema/transação por suíte é uma melhoria possível futura; `maxWorkers: 1` é a solução direta
-adotada agora.
+## Variáveis de ambiente
 
-## Configurando o Stripe (modo sandbox)
+Copie `.env.example` para `.env`. Referência completa (todas comentadas no próprio arquivo):
 
-1. Crie uma conta Stripe (gratuita) e pegue a chave secreta de **teste** em
-   [dashboard.stripe.com/test/apikeys](https://dashboard.stripe.com/test/apikeys) — algo como
-   `sk_test_51...`. Nenhuma cobrança real é feita em modo teste.
-2. Defina no `.env` (ou nas variáveis do container):
-   ```
-   STRIPE_SECRET_KEY=sk_test_...
-   APP_BASE_URL=http://localhost:3000
-   ```
-3. Sem `STRIPE_WEBHOOK_SECRET` ainda configurada, o checkout é criado normalmente, mas a
-   confirmação do pagamento (que depende do webhook) não acontece — veja a seção abaixo para obter
-   esse segredo com o Stripe CLI.
-4. Reserve um horário pela interface (ou via `POST /clinicas/:slug/agendamentos`) — a resposta traz
-   `checkoutUrl`, um link de checkout hospedado pelo Stripe. Use um
-   [cartão de teste](https://docs.stripe.com/testing#cards) (ex.: `4242 4242 4242 4242`, qualquer
-   data futura e CVC) para simular um pagamento aprovado.
-
-Sem `STRIPE_SECRET_KEY` configurada, a criação de reserva falha com `500 Erro interno do
-servidor` (o erro específico — `STRIPE_SECRET_KEY não configurada.` — fica no log do servidor).
-Esse é o comportamento esperado e validado em Docker na ausência de credenciais reais: um erro
-controlado, não uma falha silenciosa ou uma queda do servidor.
-
-## Validando o webhook com o Stripe CLI
-
-O webhook (`POST /webhooks/stripe`) precisa da assinatura de cada evento validada contra
-`STRIPE_WEBHOOK_SECRET` — sem uma chave `STRIPE_SECRET_KEY` real, não há como gerá-lo. Quando uma
-chave de teste estiver disponível, o fluxo completo é:
-
-1. Instale o [Stripe CLI](https://docs.stripe.com/stripe-cli) e autentique: `stripe login`.
-2. Com a aplicação rodando (local ou Docker) em `http://localhost:3000`, encaminhe os eventos:
-   ```bash
-   stripe listen --forward-to localhost:3000/webhooks/stripe
-   ```
-   O comando imprime um `whsec_...` — copie para `STRIPE_WEBHOOK_SECRET` no `.env` e reinicie a
-   aplicação (`docker compose restart app` ou reinicie o `npm run dev`).
-3. Com o `stripe listen` ainda rodando em outro terminal, dispare um evento de teste:
-   ```bash
-   stripe trigger checkout.session.completed
-   ```
-   Ou, mais representativo do fluxo real: crie uma reserva pela aplicação, abra o `checkoutUrl`
-   retornado e pague com o cartão de teste `4242 4242 4242 4242`. O Stripe envia
-   `checkout.session.completed` de verdade, o CLI encaminha para `localhost:3000/webhooks/stripe`,
-   e você deve ver no log da aplicação a linha `[email] preview: https://ethereal.email/...` (ou o
-   envio real, se `SMTP_HOST` estiver configurada) e o agendamento passando para `CONFIRMADO`
-   (`GET /clinicas/:slug/agendamentos/:cpf`).
-4. Para simular uma sessão expirada/pagamento não concluído: `stripe trigger checkout.session.expired`
-   — o agendamento correspondente deve ser removido e o horário liberado (visível em
-   `GET /clinicas/:slug/profissionais/:id/datas` e, em tempo real, para quem estiver com aquele
-   profissional aberto na tela).
-
-Esse é o único trecho do fluxo que depende de uma credencial Stripe real — todo o resto (criação de
-sessão, verificação de assinatura, idempotência, e-mail, tempo real) já está validado por testes
-automatizados com mocks (ver `tests/pagamentos.test.ts`) e, no que não depende da chave, em Docker.
-
-## Como funciona o fluxo de pagamento, e-mail e tempo real
-
-1. `POST /clinicas/:slug/agendamentos` valida a data, faz upsert do paciente e cria o
-   `Agendamento` com status `PENDENTE_PAGAMENTO` — a constraint única
-   `(profissionalId, dataConsulta)` garante que duas requisições simultâneas para a mesma vaga não
-   criem dois registros (a segunda recebe 400).
-2. A vaga já é considerada ocupada a partir daqui: um evento Socket.io
-   `datas:atualizadas` é emitido para a sala `clinica:<slug>:profissional:<id>` (ver
-   [src/realtime/socket.ts](src/realtime/socket.ts)), e qualquer cliente com aquele profissional
-   selecionado recarrega a lista de datas sem precisar de F5.
-3. Em seguida é criada uma sessão do **Stripe Checkout** (`criarSessaoCheckout`, em
-   [src/services/stripeClient.ts](src/services/stripeClient.ts)) com expiração de 30 minutos, e um
-   registro `Pagamento` (status `PENDENTE`) é persistido vinculado ao agendamento. A resposta ao
-   cliente inclui `checkoutUrl` para onde o front redireciona.
-4. O Stripe processa o pagamento e chama `POST /webhooks/stripe` de forma assíncrona
-   ([src/controllers/webhooks.controller.ts](src/controllers/webhooks.controller.ts)), que valida a
-   assinatura (`stripe-signature` contra `STRIPE_WEBHOOK_SECRET`, sobre o corpo **cru** da
-   requisição — por isso essa rota usa `express.raw()`, montada antes do `express.json()` global em
-   `src/app.ts`) e trata dois eventos:
-   - `checkout.session.completed` → `pagamentosService.confirmarPagamento`: marca o pagamento
-     `CONFIRMADO`, o agendamento `CONFIRMADO`, e dispara o e-mail de confirmação
-     (`emailService.enviarConfirmacao`). Idempotente — reenvios do mesmo evento (garantidos pelo
-     próprio contrato do Stripe) não reprocessam nem reenviam e-mail.
-   - `checkout.session.expired` → `pagamentosService.cancelarPorFalhaPagamento`: marca o pagamento
-     `CANCELADO`, **remove** o agendamento (a vaga volta a ficar disponível de verdade, não fica um
-     status "falhou" ocupando o horário) e emite `datas:atualizadas` de novo.
-5. Cancelamento manual (pelo paciente via CPF, ou pela equipe da clínica autenticada) segue o mesmo
-   padrão: remove o agendamento, emite `datas:atualizadas` e envia o e-mail de cancelamento
-   (`emailService.enviarCancelamento`).
-6. E-mails nunca derrubam o fluxo que os disparou — falha de envio só é logada
-   (`src/services/emailService.ts`). Sem `SMTP_HOST`, cada e-mail é enviado a uma conta de teste
-   Ethereal criada sob demanda, e a URL de preview aparece no log do servidor.
+| Variável                                                                            | Obrigatória                    | Descrição                                                                                              |
+| ----------------------------------------------------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `PORT`                                                                              | não (default `3000`)           | Porta HTTP.                                                                                            |
+| `NODE_ENV`                                                                          | não                            | `production` ativa log JSON puro e cookie de refresh com `Secure`.                                     |
+| `LOG_LEVEL`                                                                         | não (default `info`)           | Nível mínimo de log do pino.                                                                           |
+| `DATABASE_URL`                                                                      | sim                            | Conexão PostgreSQL.                                                                                    |
+| `ALLOWED_ORIGINS`                                                                   | não                            | Origens de CORS liberadas, separadas por vírgula. Vazio = fechado (front e back são same-origin hoje). |
+| `ACCESSCORE_URL`                                                                    | sim                            | Base URL (com `/api/v1`) da instância do AccessCore.                                                   |
+| `ACCESSCORE_ADMIN_EMAIL` / `ACCESSCORE_ADMIN_PASSWORD`                              | não                            | Só para `scripts/bootstrap-accesscore.ts`, não lidas em runtime.                                       |
+| `APP_BASE_URL`                                                                      | sim                            | URL pública desta app, usada nos links de retorno do Stripe Checkout.                                  |
+| `STRIPE_SECRET_KEY`                                                                 | sim, para pagamentos           | Chave secreta do Stripe (`sk_test_...`).                                                               |
+| `STRIPE_WEBHOOK_SECRET`                                                             | sim, para confirmar pagamentos | Segredo (`whsec_...`) do webhook.                                                                      |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` | não                            | Sem `SMTP_HOST`, cai no fallback Ethereal (dev/teste).                                                 |
 
 ## Rotas da API
 
-Todas as rotas abaixo (exceto `/webhooks/stripe`) são montadas sob `/clinicas/:clinicaSlug`, com o
-`clinicaSlug` resolvido pelo middleware `resolveClinica` (404 se a clínica não existir).
+Todas as rotas abaixo (exceto `/health` e `/webhooks/stripe`) vivem sob `/clinicas/:clinicaSlug`.
 
-| Método | Rota                                           | Descrição                                                  |
-| ------ | ---------------------------------------------- | ---------------------------------------------------------- |
-| GET    | `/especialidades`                              | Lista especialidades distintas da clínica                  |
-| GET    | `/profissionais`                               | Lista profissionais (filtro opcional `?especialidade=`)    |
-| GET    | `/profissionais/:id/datas`                     | Datas disponíveis de um profissional                       |
-| POST   | `/agendamentos`                                | Cria reserva + sessão de checkout Stripe                   |
-| GET    | `/agendamentos/:cpf`                           | Busca agendamentos por CPF                                 |
-| DELETE | `/agendamentos/:id`                            | Cancela (paciente, exige `cpf` no corpo)                   |
-| POST   | `/auth/login`, `/auth/refresh`, `/auth/logout` | Autenticação via AccessCore                                |
-| POST   | `/admin/profissionais`                         | Cria profissional (exige permissão `profissionais:manage`) |
-| DELETE | `/admin/agendamentos/:id`                      | Cancela como equipe (exige `agendamentos:manage`)          |
-| POST   | `/webhooks/stripe`                             | Webhook do Stripe (fora do prefixo de clínica)             |
+| Método | Rota                                           | Descrição                                         |
+| ------ | ---------------------------------------------- | ------------------------------------------------- |
+| GET    | `/health`                                      | Healthcheck (checa conectividade com o banco)     |
+| GET    | `/especialidades`                              | Especialidades distintas da clínica               |
+| GET    | `/profissionais`                               | Profissionais (filtro opcional `?especialidade=`) |
+| GET    | `/profissionais/:id/datas`                     | Datas disponíveis de um profissional              |
+| POST   | `/agendamentos`                                | Cria reserva + sessão de checkout Stripe          |
+| GET    | `/agendamentos/:cpf`                           | Busca agendamentos por CPF                        |
+| DELETE | `/agendamentos/:id`                            | Cancela (paciente, exige `cpf` no corpo)          |
+| POST   | `/auth/login`, `/auth/refresh`, `/auth/logout` | Autenticação via AccessCore                       |
+| POST   | `/admin/profissionais`                         | Cria profissional (`profissionais:manage`)        |
+| DELETE | `/admin/agendamentos/:id`                      | Cancela como equipe (`agendamentos:manage`)       |
+| POST   | `/webhooks/stripe`                             | Webhook do Stripe                                 |
+
+## Roadmap futuro
+
+Itens conhecidos e deliberadamente fora do escopo atual (não são bugs — são a linha onde este
+projeto parou de propósito):
+
+- **Convite de membro para uma clínica.** Hoje, associar um usuário do AccessCore a uma clínica
+  (tabela `Membro`) é feito por acesso direto ao banco — não existe uma rota `POST
+/admin/membros`. Razoável para uma clínica só (ou para o portfólio); um fluxo de convite por
+  e-mail seria o próximo passo natural para várias clínicas se auto-gerenciando.
+- **CSP com nonce.** Exigiria mover o `<script>` inline do `index.html` para um arquivo externo —
+  ver [Decisões técnicas](#decisões-técnicas).
+- **Job de limpeza de reservas órfãs** para o caso (raro, mas possível) de o Stripe ficar
+  indisponível bem no meio da criação da sessão de checkout, depois do agendamento já ter sido
+  criado — hoje esse caso específico já não trava a vaga (ver bug corrigido no relatório do
+  Checkpoint 5), mas um job periódico seria uma camada extra de segurança.
+- **Front-end como aplicação separada** (hoje é HTML/CSS/JS estático servido pelo próprio Express)
+  — pré-requisito, junto com a CSP, para uma UI mais rica sem reescrever o backend.
+- **Histórico de pagamento pós-cancelamento.** Cancelar um agendamento já pago também remove o
+  registro de `Pagamento` (cascade) — manter histórico exigiria soft-delete no `Agendamento`.
+
+## Capturas de tela
+
+_Adicione aqui screenshots/GIF do fluxo de reserva, do painel administrativo e do e-mail de
+confirmação — a aplicação está no ar em https://horizonte-saude-api.onrender.com para gravar._
