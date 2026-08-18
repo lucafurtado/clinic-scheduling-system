@@ -9,20 +9,30 @@ import { agendamentosService } from '../services/agendamentos.service';
 
 export async function criar(req: Request, res: Response) {
   const dados = criarAgendamentoSchema.parse(req.body);
-  const resultado = await agendamentosService.criar(dados);
+  const resultado = await agendamentosService.criar(req.clinica!.id, req.clinica!.slug, dados);
   res.status(201).json(resultado);
 }
 
 export async function buscarPorCpf(req: Request, res: Response) {
   const { cpf } = cpfParamSchema.parse(req.params);
   const cpfLimpo = cpf.replace(/\D/g, '');
-  const resultado = await agendamentosService.buscarPorCpf(cpfLimpo);
+  const resultado = await agendamentosService.buscarPorCpf(req.clinica!.id, cpfLimpo);
   res.json(resultado);
 }
 
 export async function cancelar(req: Request, res: Response) {
   const { id } = agendamentoIdParamSchema.parse(req.params);
   const { cpf } = cancelarAgendamentoBodySchema.parse(req.body);
-  const resultado = await agendamentosService.cancelar(id, cpf);
+  const resultado = await agendamentosService.cancelar(req.clinica!.id, req.clinica!.slug, id, cpf);
+  res.json(resultado);
+}
+
+export async function cancelarComoEquipe(req: Request, res: Response) {
+  const { id } = agendamentoIdParamSchema.parse(req.params);
+  const resultado = await agendamentosService.cancelarComoEquipe(
+    req.clinica!.id,
+    req.clinica!.slug,
+    id,
+  );
   res.json(resultado);
 }

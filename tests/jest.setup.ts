@@ -3,4 +3,5 @@
 // mistura que truncou os dados de desenvolvimento na primeira versão disto.
 process.env.DATABASE_URL =
   process.env.TEST_DATABASE_URL ??
-  'postgresql://horizonte:horizonte@localhost:5432/horizonte_saude_test';
+  'postgresql://horizonte:horizonte@localhost:5434/horizonte_saude_test';
+process.env.NODE_ENV = 'test';

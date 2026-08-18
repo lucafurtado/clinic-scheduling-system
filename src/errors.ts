@@ -25,3 +25,9 @@ export class ForbiddenError extends AppError {
     super(message, 403);
   }
 }
+
+export class UnauthorizedError extends AppError {
+  constructor(message = 'Autenticação necessária.') {
+    super(message, 401);
+  }
+}

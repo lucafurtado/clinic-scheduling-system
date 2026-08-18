@@ -12,6 +12,7 @@ export const criarAgendamentoSchema = z.object({
   nome: z.string(MENSAGEM_CAMPOS_OBRIGATORIOS).trim().min(1, MENSAGEM_CAMPOS_OBRIGATORIOS),
   cpf: cpfSchema,
   telefone: z.string(MENSAGEM_CAMPOS_OBRIGATORIOS).trim().min(1, MENSAGEM_CAMPOS_OBRIGATORIOS),
+  email: z.string(MENSAGEM_CAMPOS_OBRIGATORIOS).trim().email('E-mail inválido.'),
   profissionalId: z.coerce
     .number(MENSAGEM_CAMPOS_OBRIGATORIOS)
     .int()

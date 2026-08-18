@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import * as profissionaisController from '../controllers/profissionais.controller';
 
-export const profissionaisRouter = Router();
+export const profissionaisRouter = Router({ mergeParams: true });
 
 profissionaisRouter.get('/especialidades', profissionaisController.listarEspecialidades);
 profissionaisRouter.get('/profissionais', profissionaisController.listarProfissionais);

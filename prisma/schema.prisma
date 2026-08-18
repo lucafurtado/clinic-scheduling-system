@@ -6,30 +6,133 @@ datasource db {
   provider = "postgresql"
 }
 
+// Uma linha por clínica cliente da plataforma. `slug` é o identificador
+// público usado nas rotas (/clinicas/:slug/...) — pensado para escalar a
+// centenas de clínicas sem expor IDs numéricos sequenciais na URL.
+model Clinica {
+  id        Int      @id @default(autoincrement())
+  nome      String
+  slug      String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+
+  profissionais Profissional[]
+  pacientes     Paciente[]
+  agendamentos  Agendamento[]
+  membros       Membro[]
+
+  @@map("clinicas")
+}
+
 model Profissional {
   id               Int           @id @default(autoincrement())
+  clinicaId        Int           @map("clinica_id")
+  clinica          Clinica       @relation(fields: [clinicaId], references: [id])
   nome             String
   especialidade    String
   datasDisponiveis DateTime[]    @map("datas_disponiveis") @db.Date
   agendamentos     Agendamento[]
 
+  @@index([clinicaId])
   @@map("profissionais")
 }
 
-model Agendamento {
-  id             Int          @id @default(autoincrement())
-  nome           String
-  cpf            String
-  telefone       String
-  profissionalId Int          @map("profissional_id")
-  profissional   Profissional @relation(fields: [profissionalId], references: [id])
-  dataConsulta   DateTime     @map("data_consulta") @db.Date
-  createdAt      DateTime     @default(now()) @map("created_at")
+// CPF só é único dentro de uma clínica, não globalmente — o mesmo CPF pode
+// ser um paciente diferente (registro diferente) em outra clínica. Isso é
+// exatamente o isolamento de dados que a Fase 7 pede.
+model Paciente {
+  id           Int           @id @default(autoincrement())
+  clinicaId    Int           @map("clinica_id")
+  clinica      Clinica       @relation(fields: [clinicaId], references: [id])
+  nome         String
+  cpf          String
+  telefone     String
+  // Necessário a partir da Fase 10 (notificações por e-mail de confirmação/
+  // cancelamento) — sem isso não há para onde mandar a notificação.
+  email        String
+  agendamentos Agendamento[]
 
-  // Fecha de vez a condição de corrida no agendamento (ver relatório da Fase 0/limitações):
-  // duas requisições simultâneas para a mesma data+profissional não conseguem mais
-  // resultar em dois agendamentos — a segunda falha com um erro de constraint,
-  // que o service traduz para a mesma resposta 400 de "já foi reservada".
+  @@unique([clinicaId, cpf])
+  @@map("pacientes")
+}
+
+// PENDENTE_PAGAMENTO já ocupa a vaga (a constraint única abaixo vale para
+// qualquer status) — é assim que ninguém mais consegue reservar o mesmo
+// horário enquanto o pagamento está em andamento. Se o pagamento falhar ou
+// expirar, o agendamento é removido (não fica um status "falhou" eterno),
+// devolvendo o horário para a lista de disponíveis.
+enum StatusAgendamento {
+  PENDENTE_PAGAMENTO
+  CONFIRMADO
+}
+
+model Agendamento {
+  id             Int               @id @default(autoincrement())
+  // Denormalizado propositalmente (também alcançável via paciente/profissional):
+  // com centenas de clínicas, filtrar agendamentos por clinicaId direto evita
+  // join em toda query tenant-scoped, e serve de segunda trava contra misturar
+  // paciente/profissional de clínicas diferentes no mesmo agendamento.
+  clinicaId      Int               @map("clinica_id")
+  clinica        Clinica           @relation(fields: [clinicaId], references: [id])
+  pacienteId     Int               @map("paciente_id")
+  paciente       Paciente          @relation(fields: [pacienteId], references: [id])
+  profissionalId Int               @map("profissional_id")
+  profissional   Profissional      @relation(fields: [profissionalId], references: [id])
+  dataConsulta   DateTime          @map("data_consulta") @db.Date
+  status         StatusAgendamento @default(PENDENTE_PAGAMENTO)
+  createdAt      DateTime          @default(now()) @map("created_at")
+
+  pagamento Pagamento?
+
+  // Fecha a condição de corrida no agendamento: duas requisições simultâneas
+  // para a mesma data+profissional não conseguem mais resultar em dois
+  // agendamentos — a segunda falha com um erro de constraint, traduzido pelo
+  // service para a mesma resposta 400 de "já foi reservada". profissionalId
+  // já implica a clínica (um profissional pertence a uma única clínica).
   @@unique([profissionalId, dataConsulta])
+  @@index([clinicaId])
   @@map("agendamentos")
+}
+
+enum StatusPagamento {
+  PENDENTE
+  CONFIRMADO
+  CANCELADO
+}
+
+// Um registro por tentativa de cobrança, separado do Agendamento de propósito:
+// mantém o histórico da cobrança (valor, provedor, id externo) sem sobrecarregar
+// o modelo de agendamento com detalhes de pagamento.
+model Pagamento {
+  id              Int             @id @default(autoincrement())
+  agendamentoId   Int             @unique @map("agendamento_id")
+  // Cascade: cancelar um agendamento (a única forma de "apagar" um hoje) não
+  // pode ficar bloqueado pela FK do pagamento. Trade-off aceito e documentado:
+  // cancelar um agendamento já pago também remove o registro do pagamento —
+  // manter histórico de pagamentos pós-cancelamento fica para uma iteração
+  // futura com soft-delete no Agendamento.
+  agendamento     Agendamento     @relation(fields: [agendamentoId], references: [id], onDelete: Cascade)
+  provider        String          @default("stripe")
+  stripeSessionId String          @unique @map("stripe_session_id")
+  valorCentavos   Int             @map("valor_centavos")
+  status          StatusPagamento @default(PENDENTE)
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  @@map("pagamentos")
+}
+
+// Associa um usuário do AccessCore (identidade central, fora deste banco) a
+// uma clínica. O AccessCore não sabe o que é uma "clínica" — essa fronteira
+// de tenant vive inteiramente aqui, do lado do Horizonte Saúde, para não
+// acoplar o AccessCore (genérico) a este domínio de negócio específico.
+model Membro {
+  id               Int      @id @default(autoincrement())
+  clinicaId        Int      @map("clinica_id")
+  clinica          Clinica  @relation(fields: [clinicaId], references: [id])
+  accessCoreUserId String   @map("accesscore_user_id")
+  criadoEm         DateTime @default(now()) @map("criado_em")
+
+  @@unique([clinicaId, accessCoreUserId])
+  @@index([accessCoreUserId])
+  @@map("membros")
 }
