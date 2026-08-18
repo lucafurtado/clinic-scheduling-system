@@ -4,7 +4,7 @@
   },
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "prisma generate && tsc",
+    "build": "prisma generate && tsc && tsc -p prisma/tsconfig.seed.json",
     "start": "prisma migrate deploy && node dist/server.js",
     "test": "jest",
     "typecheck": "tsc --noEmit",
