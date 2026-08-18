@@ -1,4 +1,5 @@
 import nodemailer, { type Transporter } from 'nodemailer';
+import { logger } from '../lib/logger';
 
 let transporterPromise: Promise<Transporter> | null = null;
 
@@ -41,10 +42,10 @@ async function enviar(destinatario: string, assunto: string, html: string) {
       html,
     });
     const preview = nodemailer.getTestMessageUrl(info);
-    if (preview) console.log(`[email] preview: ${preview}`);
+    if (preview) logger.info({ preview }, '[email] preview');
   } catch (error) {
     // Falha de e-mail nunca pode derrubar o fluxo que chamou isto — só loga.
-    console.error('[email] falha ao enviar:', error);
+    logger.error(error, '[email] falha ao enviar');
   }
 }
 

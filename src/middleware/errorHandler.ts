@@ -17,12 +17,12 @@ export function errorHandler(err: unknown, req: Request, res: Response, next: Ne
   // Chega aqui só quando não é um 401 de credenciais (esse já foi tratado no
   // controller) — ex.: AccessCore fora do ar, rate limit, erro 5xx dele.
   if (err instanceof AccessCoreError) {
-    console.error(err);
+    req.log.error(err);
     return res
       .status(502)
       .json({ erro: 'Serviço de autenticação indisponível. Tente novamente em instantes.' });
   }
 
-  console.error(err);
+  req.log.error(err);
   return res.status(500).json({ erro: 'Erro interno do servidor.' });
 }

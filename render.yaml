@@ -1,0 +1,46 @@
+services:
+  - type: web
+    name: horizonte-saude-api
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: horizonte-saude-db
+          property: connectionString
+      - key: ACCESSCORE_URL
+        value: https://accesscore-backend.onrender.com/api/v1
+      # Preenchida depois do primeiro deploy, quando o Render mostra a URL
+      # pública atribuída ao serviço (ver README, seção Deploy).
+      - key: APP_BASE_URL
+        sync: false
+      # Sandbox do Stripe — preencha em Render → serviço → Environment quando
+      # tiver uma chave de teste (sk_test_...). Sem isso, a criação de reserva
+      # falha com 500 controlado (comportamento já validado e documentado).
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      # SMTP (Resend recomendado — ver .env.example). Sem SMTP_HOST, cai no
+      # fallback de conta de teste Ethereal (nenhum e-mail real é entregue).
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+
+databases:
+  - name: horizonte-saude-db
+    plan: free
+    databaseName: horizonte_saude
+    user: horizonte
