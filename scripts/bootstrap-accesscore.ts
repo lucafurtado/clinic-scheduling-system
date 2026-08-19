@@ -1,11 +1,11 @@
 /**
  * Registra, via a API já genérica do AccessCore (sem tocar no código dele),
- * as permissões e o papel que o Horizonte Saúde precisa para proteger suas
+ * as permissões e o papel que o ClinicFlow precisa para proteger suas
  * rotas administrativas. Idempotente — pode rodar de novo sem duplicar nada.
  *
  * Uso:
  *   ACCESSCORE_URL=http://localhost:8000/api/v1 \
- *   ACCESSCORE_ADMIN_EMAIL=admin@horizonte.dev \
+ *   ACCESSCORE_ADMIN_EMAIL=admin@clinicflow.dev \
  *   ACCESSCORE_ADMIN_PASSWORD=... \
  *   npx tsx scripts/bootstrap-accesscore.ts [--assign-user <uuid>]
  */
@@ -19,12 +19,12 @@ const PERMISSOES_NECESSARIAS = [
   {
     resource: 'profissionais',
     action: 'manage',
-    description: 'Gerenciar profissionais de uma clínica (Horizonte Saúde)',
+    description: 'Gerenciar profissionais de uma clínica (ClinicFlow)',
   },
   {
     resource: 'agendamentos',
     action: 'manage',
-    description: 'Gerenciar agendamentos de uma clínica (Horizonte Saúde)',
+    description: 'Gerenciar agendamentos de uma clínica (ClinicFlow)',
   },
 ];
 
@@ -87,7 +87,7 @@ async function main() {
       method: 'POST',
       body: JSON.stringify({
         name: NOME_ROLE,
-        description: 'Acesso à área administrativa de uma clínica no Horizonte Saúde',
+        description: 'Acesso à área administrativa de uma clínica no ClinicFlow',
       }),
     });
     console.log(`role criada: ${NOME_ROLE}`);

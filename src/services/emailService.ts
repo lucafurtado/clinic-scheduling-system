@@ -36,7 +36,7 @@ async function enviar(destinatario: string, assunto: string, html: string) {
   try {
     const transporter = await obterTransporter();
     const info = await transporter.sendMail({
-      from: process.env.SMTP_FROM ?? '"Horizonte Saúde" <nao-responda@horizonte-saude.dev>',
+      from: process.env.SMTP_FROM ?? '"ClinicFlow" <nao-responda@clinicflow.dev>',
       to: destinatario,
       subject: assunto,
       html,
@@ -65,7 +65,7 @@ export const emailService = {
   enviarConfirmacao(destinatario: string, dados: DadosAgendamentoParaEmail) {
     return enviar(
       destinatario,
-      'Agendamento confirmado — Horizonte Saúde',
+      'Agendamento confirmado — ClinicFlow',
       `<p>Olá, ${dados.nome}!</p>
        <p>Seu pagamento foi aprovado e o agendamento está confirmado:</p>
        <ul>
@@ -80,7 +80,7 @@ export const emailService = {
   enviarCancelamento(destinatario: string, dados: DadosAgendamentoParaEmail) {
     return enviar(
       destinatario,
-      'Agendamento cancelado — Horizonte Saúde',
+      'Agendamento cancelado — ClinicFlow',
       `<p>Olá, ${dados.nome}.</p>
        <p>Seu agendamento foi cancelado:</p>
        <ul>

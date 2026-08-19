@@ -1,71 +1,117 @@
-# Horizonte Saúde
+<div align="center">
 
-Plataforma de agendamento multi-clínica: paciente reserva um horário, paga online para confirmar,
-recebe e-mail de confirmação e a agenda atualiza em tempo real para qualquer outra pessoa olhando
-o mesmo profissional. Evoluída de um MVP acadêmico (front-end estático + `server.js` + JSON local)
-para uma stack TypeScript/Prisma/PostgreSQL com autenticação delegada, isolamento real entre
-clínicas e deploy em produção.
+<img src="docs/images/banner.svg" alt="ClinicFlow — Multi-tenant Clinic Scheduling Platform" width="100%" />
 
-**App em produção:** https://horizonte-saude-api.onrender.com _(free tier — o primeiro request
-após um tempo sem uso pode levar 30-60s para "acordar" o servidor)_
-**Repositório:** https://github.com/lucafurtado/clinic-scheduling-system
+### Multi-tenant clinic scheduling platform with paid reservations, real-time availability, and delegated authentication.
 
-## Sumário
+[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-339933?style=flat&logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Express](https://img.shields.io/badge/Express-000000?style=flat&logo=express&logoColor=white)](https://expressjs.com/)
+[![Prisma](https://img.shields.io/badge/Prisma-2D3748?style=flat&logo=prisma&logoColor=white)](https://www.prisma.io/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=flat&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=white)](https://www.docker.com/)
+[![Jest](https://img.shields.io/badge/Jest-C21325?style=flat&logo=jest&logoColor=white)](https://jestjs.io/)
+[![Socket.io](https://img.shields.io/badge/Socket.io-010101?style=flat&logo=socket.io&logoColor=white)](https://socket.io/)
+[![Stripe](https://img.shields.io/badge/Stripe-635BFF?style=flat&logo=stripe&logoColor=white)](https://stripe.com/)
+[![Render](https://img.shields.io/badge/Render-46E3B7?style=flat&logo=render&logoColor=white)](https://render.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat)](LICENSE)
 
-- [Visão de negócio](#visão-de-negócio)
-- [Arquitetura](#arquitetura)
-- [Stack](#stack)
-- [Decisões técnicas](#decisões-técnicas)
-- [Funcionalidades](#funcionalidades)
-- [Multi-tenancy](#multi-tenancy)
-- [Autenticação via AccessCore](#autenticação-via-accesscore)
-- [Pagamentos (Stripe)](#pagamentos-stripe)
-- [Tempo real (Socket.io)](#tempo-real-socketio)
-- [E-mail transacional](#e-mail-transacional)
-- [Testes](#testes)
-- [Rodando localmente](#rodando-localmente-sem-docker)
-- [Rodando via Docker](#rodando-via-docker)
-- [Deploy](#deploy)
-- [Variáveis de ambiente](#variáveis-de-ambiente)
-- [Rotas da API](#rotas-da-api)
-- [Roadmap futuro](#roadmap-futuro)
-- [Capturas de tela](#capturas-de-tela)
+**[Live app](https://horizonte-saude-api.onrender.com)** · **[API docs](#api)** · **[Architecture](docs/architecture.md)** · **[Deployment](docs/deployment.md)**
 
-## Visão de negócio
+</div>
 
-Clínicas pequenas perdem receita de duas formas específicas que este projeto ataca diretamente:
+---
 
-- **No-show sem custo para o paciente** — reservar não custa nada, então cancelar (ou simplesmente
-  não aparecer) também não custa nada. Exigir uma reserva de horário paga na hora de agendar muda
-  esse incentivo sem precisar de um sistema de cobrança manual.
-- **Agenda desatualizada entre quem está olhando ao mesmo tempo** — sem tempo real, dois pacientes
-  podem estar vendo a mesma data "disponível" simultaneamente; um deles vai descobrir que perdeu o
-  horário só depois de tentar confirmar.
+## Overview
 
-O produto é pensado para **múltiplas clínicas na mesma plataforma** (não uma instância por
-cliente): cada clínica tem sua própria URL (`/clinicas/:slug`), sua própria equipe, seus próprios
-profissionais e pacientes — sem ver nada da clínica vizinha. Uma segunda clínica de exemplo
-(`vida-plena`) existe nos dados de seed exatamente para provar esse isolamento, não só descrevê-lo.
+ClinicFlow is a backend platform for clinics that need online scheduling with a real payment
+guarantee: a patient picks a specialty, a professional and a date, and reserving that slot
+requires paying online to hold it. Payment confirmation is asynchronous (Stripe webhook,
+idempotent), the slot updates in real time for anyone else looking at the same professional, and a
+confirmation email goes out automatically — all served from one deployment that hosts **multiple
+independent clinics**, each fully isolated from the others.
 
-## Arquitetura
+It started as a single-tenant academic MVP (static HTML + local JSON storage) and was rebuilt,
+phase by phase, into the production system described below: TypeScript, Prisma/PostgreSQL,
+authentication delegated to an external identity service, Stripe payments, Socket.io, structured
+observability, and a real deploy on Render.
 
-Camadas: **routes → controllers → services → repositories → Prisma/PostgreSQL**. Cada camada só
-conhece a de baixo; a lógica de negócio (services) não sabe nada sobre Express, e os repositories
-não sabem nada sobre regras de negócio — só executam queries.
+> ⚠️ **Portfolio project.** This is a fully working system, not a mockup — but the free-tier hosting
+> means the API may take 30-60s to respond on the first request after a period of inactivity
+> (cold start). See [Deployment](#deployment) for the trade-offs of running on free infrastructure.
+
+## Why this project?
+
+- **Layered architecture** (routes → controllers → services → repositories) with a clear
+  single-responsibility boundary at each layer — not a folder-per-file-type exercise, an actual
+  dependency direction that's enforced in practice.
+- **Real multi-tenancy**, not a `tenant_id` bolted on as an afterthought — every repository method
+  requires a `clinicaId`, so tenant isolation is a structural guarantee, checked by the compiler,
+  not a convention someone can forget.
+- **Delegated identity** via [AccessCore](https://github.com/lucafurtado/accesscore), an external
+  RBAC/identity service — this project never stores a password or decodes a JWT itself.
+- **A real payment integration**, including the asynchronous parts that are easy to get wrong:
+  webhook signature verification, idempotent event handling, and releasing a reservation when
+  payment fails instead of leaving it stuck.
+- **Real-time state**, scoped correctly — Socket.io rooms per clinic _and_ professional, not a
+  global broadcast.
+- **Dockerized from day one**, with a docker-compose environment that mirrors production closely
+  enough to catch real bugs before they reach it (two of the three bugs fixed for this release were
+  caught exactly this way).
+- **Deployed to a real, persistent production environment** — not just "it works on my machine":
+  see [Deployment](#deployment) for the two production build bugs that were only visible under an
+  actual `NODE_ENV=production` install, and how they were found and fixed.
+- **Automated tests that test behavior, not implementation** — Jest + Supertest against a real
+  Postgres instance, with only genuinely external services (AccessCore, Stripe, email) mocked.
+- **Built for a real environment**, with the operational concerns that come with one: structured
+  logging, a health check backed by a real database ping, graceful shutdown, and security headers.
+
+## Highlights
+
+|                                   |                                                                                             |
+| --------------------------------- | ------------------------------------------------------------------------------------------- |
+| 🏗️ **Clean Architecture**         | Strict layering, dependency direction enforced by import discipline                         |
+| 🗄️ **Repository Pattern**         | Prisma is only ever touched by the repository layer                                         |
+| 🔐 **RBAC**                       | Permission-based route guards, resolved live against the identity provider on every request |
+| 🏢 **Multi-tenant**               | Tenant isolation enforced at the data-access layer, not just by convention                  |
+| 🔌 **WebSockets**                 | Socket.io, rooms scoped per clinic + professional                                           |
+| 💳 **Payment Integration**        | Stripe Checkout + signed, idempotent webhooks                                               |
+| 🪪 **External Identity Provider** | Auth/RBAC delegated to AccessCore — zero password handling in this codebase                 |
+| 🐳 **Docker**                     | `docker compose up` and you have the full stack, database included                          |
+| 📊 **Observability**              | Structured JSON logging (pino), `/health` backed by a real DB check                         |
+| 🚀 **Production deploy**          | Live on Render — not just documented, actually running                                      |
+
+## Features
+
+✅ Multi-tenant clinic isolation
+✅ RBAC (permission-based route guards)
+✅ Delegated authentication (external identity provider)
+✅ Prisma ORM with versioned migrations
+✅ PostgreSQL with race-condition-closing constraints
+✅ Stripe Checkout integration
+✅ Stripe Webhooks (signed, idempotent)
+✅ Socket.io real-time availability updates
+✅ Docker & Docker Compose
+✅ Automated tests (Jest + Supertest, real database)
+✅ Health check endpoint
+✅ Structured logging (pino)
+✅ Production ready (deployed, hardened, documented)
+
+## Architecture
 
 ```mermaid
 flowchart TB
-    subgraph Cliente
-        Browser["Navegador (index.html + JS)"]
+    subgraph Client
+        Browser["Browser (static HTML/JS)"]
     end
 
-    subgraph "Horizonte Saúde (Node/Express)"
+    subgraph "ClinicFlow API (Node/Express)"
         API["routes → controllers → services → repositories"]
         Socket["Socket.io"]
     end
 
-    subgraph Externos
-        AccessCore["AccessCore\n(identidade, fora deste repo)"]
+    subgraph External
+        AccessCore["AccessCore\n(identity, separate service)"]
         Stripe["Stripe Checkout\n(sandbox)"]
         SMTP["SMTP\n(Resend / Ethereal)"]
     end
@@ -75,291 +121,234 @@ flowchart TB
     Browser -- "REST + WebSocket" --> API
     Browser <-. "datas:atualizadas" .-> Socket
     API --> DB
-    API -- "login / validar token" --> AccessCore
-    API -- "criar sessão de checkout" --> Stripe
-    Stripe -- "webhook assinado" --> API
-    API -- "confirmação / cancelamento" --> SMTP
+    API -- "login / validate token" --> AccessCore
+    API -- "create checkout session" --> Stripe
+    Stripe -- "signed webhook" --> API
+    API -- "confirmation / cancellation" --> SMTP
     API --> Socket
 ```
 
-Um middleware (`resolveClinica`) resolve `:clinicaSlug` no início de toda rota de negócio e
-popula `req.clinica` — nenhum controller/service abaixo dele precisa saber que multi-tenancy
-existe, só recebe um `clinicaId` já resolvido e validado (404 antes de qualquer outra coisa se o
-slug não existir).
+A `resolveClinica` middleware resolves `:clinicaSlug` at the top of every business route and
+populates `req.clinica` — nothing downstream needs to know multi-tenancy exists, it just receives
+an already-validated `clinicaId` (404 upfront if the slug doesn't exist).
 
-## Stack
+Full write-up, including the authentication sequence diagram and the ER diagram of the data model:
+**[docs/architecture.md](docs/architecture.md)** and **[docs/system-overview.md](docs/system-overview.md)**.
 
-| Camada        | Escolha                                                                                 | Por quê                                                                                                                                                                                                      |
-| ------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Linguagem     | TypeScript                                                                              | Tipagem de ponta a ponta entre schema (Prisma), services e controllers — a maioria dos bugs de "campo errado" vira erro de compilação, não de runtime.                                                       |
-| Web framework | Express 5                                                                               | Suporte nativo a handlers `async` (erros em promises chegam ao `errorHandler` sem `try/catch` manual em cada rota) — motivo real de não ter ficado no Express 4.                                             |
-| ORM           | Prisma 7 (`@prisma/adapter-pg`)                                                         | Migrations versionadas, client com tipos gerados do schema, e o adapter `pg` evita o driver Rust anterior do Prisma.                                                                                         |
-| Banco         | PostgreSQL 16                                                                           | Constraints únicas compostas (`profissionalId+dataConsulta`, `clinicaId+cpf`) fazem o banco fechar condições de corrida que o código sozinho não fecharia de forma confiável.                                |
-| Identidade    | AccessCore (serviço externo, [repo próprio](https://github.com/lucafurtado/accesscore)) | Login, RBAC e emissão/validação de token não são o domínio deste projeto — delegar evita reimplementar autenticação (e os bugs de segurança que vêm junto) numa segunda vez.                                 |
-| Pagamentos    | Stripe Checkout (modo sandbox)                                                          | Checkout hospedado pelo Stripe — nenhum dado de cartão passa por este backend.                                                                                                                               |
-| Tempo real    | Socket.io                                                                               | Fallback automático para long-polling quando WebSocket não está disponível (proxies corporativos, etc.), sem código extra.                                                                                   |
-| E-mail        | Nodemailer + Ethereal (dev) / Resend (produção)                                         | Nodemailer é agnóstico de provedor — trocar de Ethereal para Resend é só configuração, sem mudar código.                                                                                                     |
-| Logging       | pino / pino-http                                                                        | JSON estruturado em produção (consumível por qualquer agregador de log), pretty-print em dev.                                                                                                                |
-| Testes        | Jest + Supertest, `ts-jest`                                                             | Testes de integração reais contra Postgres (não mocks de banco) — só AccessCore/Stripe/e-mail são mockados, por serem serviços externos.                                                                     |
-| Deploy        | Render (Web Service + PostgreSQL)                                                       | Processo Node persistente — necessário para conexões WebSocket do Socket.io, que não sobrevivem bem a um modelo serverless tradicional (motivo pelo qual o `vercel.json` original foi removido; ver Deploy). |
+## Folder Structure
 
-## Decisões técnicas
+```
+src/
+├── app.ts, server.ts        # Express + Socket.io bootstrap, graceful shutdown
+├── controllers/               # HTTP ↔ domain translation
+├── services/                  # business rules + external integrations
+├── repositories/              # the only layer that talks to Prisma
+├── routes/                    # method + path → controller wiring
+├── middleware/                 # auth (AccessCore), resolveClinica (tenant), errorHandler
+├── schemas/                    # Zod validation, one file per domain
+├── realtime/socket.ts           # Socket.io rooms
+└── lib/                         # Prisma client singleton, pino logger
 
-Um resumo das decisões que não são óbvias só de ler o código (o racional completo de cada uma
-está comentado no arquivo correspondente):
+prisma/            # schema, migrations, seed (compiled separately for production)
+tests/              # Jest + Supertest, real Postgres, external services mocked
+docs/                # architecture, system overview, deployment
+scripts/              # one-off operational scripts (AccessCore bootstrap)
+```
 
-- **Reserva "trava" o horário antes do pagamento ser confirmado.** O agendamento é criado com
-  status `PENDENTE_PAGAMENTO` e já ocupa a vaga (a constraint única não distingue status) — a
-  alternativa (só reservar depois do pagamento confirmado) permitiria dois pacientes pagarem pelo
-  mesmo horário em paralelo, com um dos dois tendo que ser estornado depois.
-- **Falha ao criar a sessão de pagamento libera a vaga imediatamente**, em vez de deixar um
-  `PENDENTE_PAGAMENTO` órfão. Bug real encontrado e corrigido durante a validação deste projeto —
-  ver [Bugs encontrados](#bugs-encontrados-e-como-foram-resolvidos) no relatório do checkpoint.
-- **Webhook do Stripe usa `express.raw()`, montado antes do `express.json()` global.** A
-  verificação de assinatura (`stripe.webhooks.constructEvent`) precisa dos bytes crus do corpo —
-  um body já reparseado pelo `express.json()` invalidaria a assinatura.
-- **Confirmação de pagamento é idempotente.** O Stripe pode reenviar o mesmo evento de webhook
-  mais de uma vez (contrato deles, não uma falha) — se o pagamento já está `CONFIRMADO`, o handler
-  não reprocessa (não reenvia e-mail, não emite Socket.io de novo).
-- **CPF é único por clínica, não globalmente.** O mesmo CPF pode ser um paciente diferente (registro
-  diferente) em outra clínica — é o mesmo isolamento de tenant aplicado até o nível de dado.
-- **CSP do Helmet está desligada deliberadamente.** O front-end atual usa `<script>` inline e
-  atributos `onclick="..."` — a CSP padrão bloquearia os dois e quebraria a aplicação. Documentado
-  como troca consciente (ver `src/app.ts`), não como um item esquecido.
-- **`npm run build` compila `prisma/seed.ts` separadamente** (`prisma/tsconfig.seed.json` →
-  `dist/prisma/seed.js`), fora do `tsconfig.json` principal. Motivo: rodar o seed em produção não
-  pode depender de `tsx`, que é uma devDependency ausente num install de produção (bug real
-  encontrado no primeiro deploy — ver relatório do checkpoint).
-- **`prisma`, `typescript` e os pacotes `@types/*` usados pelo código-fonte vivem em
-  `dependencies`, não `devDependencies`.** Plataformas de deploy costumam pular devDependencies
-  quando `NODE_ENV=production` — sem isso, o build de produção falha (outro bug real, mesmo
-  relatório).
+## Tech Stack
 
-## Funcionalidades
+| Layer         | Choice                                                                               | Why                                                                                                                                                                                                         |
+| ------------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Language      | TypeScript                                                                           | End-to-end typing from the schema (Prisma) through services to controllers — most "wrong field" bugs become compile errors, not runtime ones.                                                               |
+| Web framework | Express 5                                                                            | Native `async` handler support — errors thrown in a promise reach `errorHandler` without a manual `try/catch` in every route.                                                                               |
+| ORM           | Prisma 7 (`@prisma/adapter-pg`)                                                      | Versioned migrations, a fully-typed client generated from the schema, and the `pg` adapter avoids Prisma's older Rust query engine.                                                                         |
+| Database      | PostgreSQL 16                                                                        | Composite unique constraints (`profissionalId+dataConsulta`, `clinicaId+cpf`) let the database itself close race conditions the application code alone wouldn't reliably close.                             |
+| Identity      | AccessCore (external service, [own repo](https://github.com/lucafurtado/accesscore)) | Login, RBAC and token issuance/validation aren't this project's domain — delegating avoids reimplementing authentication (and its security bugs) a second time.                                             |
+| Payments      | Stripe Checkout (sandbox mode)                                                       | Checkout is hosted by Stripe — no card data ever touches this backend.                                                                                                                                      |
+| Real-time     | Socket.io                                                                            | Automatic long-polling fallback when WebSocket isn't available (corporate proxies, etc.), no extra code required.                                                                                           |
+| Email         | Nodemailer + Ethereal (dev) / Resend (production)                                    | Nodemailer is provider-agnostic — switching from Ethereal to Resend is configuration only, no code change.                                                                                                  |
+| Logging       | pino / pino-http                                                                     | Structured JSON in production (ready for any log aggregator), pretty-printed in development.                                                                                                                |
+| Testing       | Jest + Supertest, `ts-jest`                                                          | Real integration tests against Postgres (no database mocking) — only AccessCore/Stripe/email are mocked, because they're genuinely external.                                                                |
+| Deployment    | Render (Web Service + PostgreSQL)                                                    | A persistent Node process — required for Socket.io's WebSocket connections, which don't survive a traditional serverless model (why the original `vercel.json` was removed; see [Deployment](#deployment)). |
 
-- Listagem de especialidades e profissionais por clínica
-- Consulta de datas disponíveis por profissional (já descontando o que está reservado)
-- Reserva de horário com cobrança via Stripe Checkout
-- Confirmação automática do agendamento quando o pagamento é aprovado (via webhook)
-- Liberação automática do horário se o pagamento expirar ou falhar
-- Cancelamento pelo paciente (via CPF) ou pela equipe da clínica (autenticada)
-- E-mail de confirmação e de cancelamento
-- Atualização em tempo real da grade de horários (Socket.io)
-- Login/administração da clínica via AccessCore, com RBAC por permissão
-- Isolamento completo entre clínicas (dados, autenticação, tempo real)
+## Running Locally
 
-## Multi-tenancy
+Prerequisites: Node 22+, a reachable PostgreSQL instance (e.g. `docker compose up db` for just the
+database).
 
-Toda rota de negócio vive sob `/clinicas/:clinicaSlug/...`. O middleware `resolveClinica`
-(`src/middleware/resolveClinica.ts`) resolve o slug para uma `Clinica` real (404 se não existir) e
-anexa `req.clinica` — a partir daí, todo repository filtra por `clinicaId` explicitamente (nunca um
-`findUnique` só por id de um recurso filho, sempre `findFirst({ where: { id, clinicaId } })`), o
-que fecha a possibilidade de vazamento cross-tenant mesmo que alguém adivinhe o id de um recurso de
-outra clínica.
+```bash
+npm install
+cp .env.example .env          # adjust DATABASE_URL etc.
+npm run prisma:migrate        # apply migrations
+npm run prisma:seed           # seed two example clinics
+npm run dev                   # tsx watch — http://localhost:3000
+```
 
-O vínculo entre um usuário do AccessCore e uma clínica vive inteiramente neste banco (modelo
-`Membro`) — o AccessCore não sabe (nem precisa saber) o que é uma "clínica"; essa fronteira de
-domínio é responsabilidade só deste serviço.
+## Docker
 
-## Autenticação via AccessCore
+```bash
+docker compose up --build -V   # -V forces recreating the node_modules anonymous volume
+docker compose exec app npx prisma migrate deploy   # first run only (empty database)
+docker compose exec app npx prisma db seed
+```
 
-A área administrativa (`/admin/*`) não reimplementa login: delega para o
-[AccessCore](https://github.com/lucafurtado/accesscore), um serviço de identidade genérico
-(`https://accesscore-backend.onrender.com`, [docs](https://accesscore-backend.onrender.com/docs)).
+App at `http://localhost:3000`, Postgres exposed on `localhost:5434` (so you can run
+`npm test`/Prisma Studio from the host while the database lives in the container).
+`docker compose down -v` tears everything down, including the data.
 
-Fluxo: `POST /clinicas/:slug/auth/login` chama o AccessCore, recebe um token, busca as permissões
-efetivas do usuário e confere se existe um `Membro` ligando esse usuário a esta clínica (senão,
-403 mesmo com credenciais válidas — login certo não significa acesso a _esta_ clínica). O refresh
-token vai num cookie `httpOnly`, escopado por clínica (`path: /clinicas/:slug/auth`), para que o
-mesmo navegador possa manter sessões independentes em clínicas diferentes.
+## Environment Variables
 
-Cada rota administrativa exige uma permissão específica (`profissionais:manage`,
-`agendamentos:manage`) verificada contra o retorno do AccessCore — nenhum JWT é decodificado
-localmente; a validação (assinatura, expiração, usuário ativo) e a resolução de permissões
-acontecem sempre no próprio AccessCore, então revogar uma role lá já vale aqui na próxima
-requisição, sem esperar o token expirar.
+Copy `.env.example` to `.env`. Full reference (every variable is also commented in that file):
 
-## Pagamentos (Stripe)
+| Variable                                                                            | Required                 | Description                                                                                        |
+| ----------------------------------------------------------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------- |
+| `PORT`                                                                              | no (default `3000`)      | HTTP port.                                                                                         |
+| `NODE_ENV`                                                                          | no                       | `production` enables pure JSON logging and the `Secure` attribute on the refresh cookie.           |
+| `LOG_LEVEL`                                                                         | no (default `info`)      | Minimum pino log level.                                                                            |
+| `DATABASE_URL`                                                                      | **yes**                  | PostgreSQL connection string.                                                                      |
+| `ALLOWED_ORIGINS`                                                                   | no                       | Comma-separated allowed CORS origins. Empty = closed (frontend and backend are same-origin today). |
+| `ACCESSCORE_URL`                                                                    | **yes**                  | Base URL (with `/api/v1`) of the AccessCore instance.                                              |
+| `ACCESSCORE_ADMIN_EMAIL` / `ACCESSCORE_ADMIN_PASSWORD`                              | no                       | Only for `scripts/bootstrap-accesscore.ts`, never read at runtime.                                 |
+| `APP_BASE_URL`                                                                      | **yes**                  | This app's public URL, used to build the Stripe Checkout return links.                             |
+| `STRIPE_SECRET_KEY`                                                                 | yes, for payments        | Stripe secret key (`sk_test_...`).                                                                 |
+| `STRIPE_WEBHOOK_SECRET`                                                             | yes, to confirm payments | Webhook signing secret (`whsec_...`).                                                              |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` | no                       | Without `SMTP_HOST`, falls back to an Ethereal test account (dev/test only).                       |
 
-Ver a explicação completa do fluxo (reserva → checkout → webhook → confirmação/e-mail/tempo real)
-em [Decisões técnicas](#decisões-técnicas) acima. Para configurar credenciais de teste e validar
-webhooks com o Stripe CLI:
+The app boots and serves every non-payment/non-email route without the optional variables above —
+this repo never ships with fake/placeholder credentials to fake a "complete" configuration.
 
-1. Crie uma conta Stripe e pegue a chave secreta de **teste** em
+## API
+
+All routes below (except `/health` and `/webhooks/stripe`) live under `/clinicas/:clinicaSlug`.
+
+### Public
+
+| Method | Route                      | Description                                             |
+| ------ | -------------------------- | ------------------------------------------------------- |
+| GET    | `/health`                  | Health check (verifies database connectivity)           |
+| GET    | `/especialidades`          | Distinct specialties for the clinic                     |
+| GET    | `/profissionais`           | Professionals (optional `?especialidade=` filter)       |
+| GET    | `/profissionais/:id/datas` | Available dates for a professional                      |
+| POST   | `/agendamentos`            | Creates a reservation + Stripe checkout session         |
+| GET    | `/agendamentos/:cpf`       | Looks up bookings by CPF                                |
+| DELETE | `/agendamentos/:id`        | Cancels a booking (patient, requires `cpf` in the body) |
+| POST   | `/webhooks/stripe`         | Stripe webhook                                          |
+
+### Authenticated (AccessCore)
+
+| Method | Route                                          | Description                                     |
+| ------ | ---------------------------------------------- | ----------------------------------------------- |
+| POST   | `/auth/login`, `/auth/refresh`, `/auth/logout` | Authentication via AccessCore                   |
+| POST   | `/admin/profissionais`                         | Creates a professional (`profissionais:manage`) |
+| DELETE | `/admin/agendamentos/:id`                      | Cancels as staff (`agendamentos:manage`)        |
+
+### Payments
+
+Full reserve → checkout → webhook → confirm flow, plus how to configure Stripe test credentials
+and validate webhooks with the Stripe CLI:
+
+1. Create a Stripe account and grab a **test** secret key at
    [dashboard.stripe.com/test/apikeys](https://dashboard.stripe.com/test/apikeys) (`sk_test_...`).
-   Modo sandbox — nenhuma cobrança real.
-2. Configure `STRIPE_SECRET_KEY` e `APP_BASE_URL` (ver [Variáveis de ambiente](#variáveis-de-ambiente)).
-3. Sem `STRIPE_WEBHOOK_SECRET`, o checkout é criado normalmente mas a confirmação (que depende do
-   webhook) não acontece. Para validar isso:
+   Sandbox mode — no real charge.
+2. Set `STRIPE_SECRET_KEY` and `APP_BASE_URL` (see [Environment Variables](#environment-variables)).
+3. Without `STRIPE_WEBHOOK_SECRET`, checkout is created normally but confirmation (which depends
+   on the webhook) never happens:
    ```bash
    stripe login
    stripe listen --forward-to localhost:3000/webhooks/stripe
-   # copie o whsec_... impresso para STRIPE_WEBHOOK_SECRET, reinicie a app
+   # copy the printed whsec_... into STRIPE_WEBHOOK_SECRET, restart the app
    stripe trigger checkout.session.completed
-   # ou: reserve um horário pela app, pague no checkoutUrl com 4242 4242 4242 4242
-   stripe trigger checkout.session.expired   # simula pagamento não concluído
+   # or: make a real reservation, pay at the returned checkoutUrl with 4242 4242 4242 4242
+   stripe trigger checkout.session.expired   # simulates an incomplete payment
    ```
 
-**Sem `STRIPE_SECRET_KEY` configurada** (o estado padrão deste repo — nenhuma chave fictícia é
-usada), criar uma reserva falha com `500 Erro interno do servidor`, controlado — o horário não fica
-preso (ver [Decisões técnicas](#decisões-técnicas)). É o comportamento validado tanto localmente
-quanto no deploy de produção.
+**Without `STRIPE_SECRET_KEY`** (this repo's default state — no fake key is used), creating a
+reservation fails with a controlled `500` and the slot is **not** left locked — see
+[docs/architecture.md](docs/architecture.md) for why, and how that failure mode was found and
+fixed. This is the behavior validated both locally and in the production deploy.
 
-## Tempo real (Socket.io)
+### Real-time
 
-Cada cliente entra numa sala `clinica:<slug>:profissional:<id>` ao selecionar um profissional
-(`src/realtime/socket.ts`). Reservar, confirmar pagamento, cancelar ou uma reserva expirar — tudo
-isso emite `datas:atualizadas` só para quem está na sala daquele profissional específico (não um
-broadcast geral), mantendo o mesmo isolamento de tenant também em tempo real.
+Each client joins a `clinica:<slug>:profissional:<id>` room when selecting a professional
+(`src/realtime/socket.ts`). Reserving, confirming payment, cancelling, or a reservation expiring
+all emit `datas:atualizadas` only to clients in that specific room — not a global broadcast — which
+keeps the same tenant isolation guarantee in real time.
 
-## E-mail transacional
+### Email
 
-`src/services/emailService.ts`: sem `SMTP_HOST` configurada, cria automaticamente uma conta de
-teste [Ethereal](https://ethereal.email/) — nenhum e-mail real é enviado, mas o fluxo roda de
-ponta a ponta e a URL de preview aparece no log do servidor. Uma falha de envio nunca derruba o
-fluxo que a disparou (reserva/cancelamento continuam válidos mesmo se o e-mail falhar) — só é
-logada. Em produção, configurar `SMTP_*` para um provedor real (recomendado: Resend).
+`src/services/emailService.ts`: without `SMTP_HOST`, an [Ethereal](https://ethereal.email/) test
+account is created automatically — no real email is sent, but the whole flow still runs end to end
+and a preview URL is logged. A send failure never breaks the flow that triggered it (a
+reservation/cancellation stays valid even if the email fails) — it's only logged. In production,
+configure `SMTP_*` for a real provider (Resend recommended).
 
-## Testes
+## Testing
 
 ```bash
-npm test            # suíte completa (Jest + Supertest)
-npm run typecheck    # tsc --noEmit
-npm run lint          # eslint .
-npm run format:check  # prettier --check .
+npm test               # full suite (Jest + Supertest)
+npm run typecheck        # tsc --noEmit
+npm run lint              # eslint .
+npm run format:check      # prettier --check .
 ```
 
-AccessCore, Stripe e o provedor de e-mail são mockados na borda (`tests/jest.setup.ts` e os
-`jest.mock(...)` no topo de cada arquivo) — a suíte não depende de nenhum serviço externo real,
-nem de credenciais. O resto (banco de dados, regras de negócio, isolamento multi-tenant, RBAC) roda
-de ponta a ponta contra um Postgres real.
+AccessCore, Stripe and the email provider are mocked at the boundary (`tests/jest.setup.ts` and the
+`jest.mock(...)` calls at the top of each test file) — the suite depends on no external service and
+no credentials. Everything else (database, business rules, multi-tenant isolation, RBAC) runs end
+to end against a real Postgres instance.
 
-Depende de um Postgres alcançável na porta `5434` (local ou via `docker compose up db`):
+Requires a Postgres reachable on port `5434` (local, or via `docker compose up db`):
 
 ```bash
 docker compose exec db psql -U horizonte -d horizonte_saude -c "CREATE DATABASE horizonte_saude_test;"
 DATABASE_URL="postgresql://horizonte:horizonte@localhost:5434/horizonte_saude_test" npx prisma migrate deploy
 ```
 
-`jest` roda com `maxWorkers: 1`: os três arquivos de teste compartilham o mesmo banco físico e cada
-um reseta as tabelas entre casos — rodar em paralelo (o padrão do Jest) causa violação de foreign
-key entre suítes concorrentes.
+`jest` runs with `maxWorkers: 1`: the three test files share the same physical database and each
+resets its own tables between cases — running in parallel (Jest's default) causes foreign-key
+violations between concurrent suites.
 
-`npx jest --coverage` gera relatório de cobertura (~85% de statements/lines no total). Cobertura
-mais baixa concentrada em código que a suíte deliberadamente não exercita de ponta a ponta:
-`src/realtime/socket.ts` (handshake real de WebSocket, fora do escopo de um teste HTTP com
-Supertest) e `src/services/accessCoreClient.ts` (cliente HTTP fino — o que importa testar é o
-comportamento de quem o usa, já coberto via mock em `tests/admin.test.ts`).
+`npx jest --coverage` produces a coverage report (~85% statements/lines overall). The lower spots
+are deliberate, not gaps: `src/realtime/socket.ts` (a real WebSocket handshake is out of scope for
+an HTTP test via Supertest) and `src/services/accessCoreClient.ts` (a thin HTTP client — what
+matters is testing the behavior of its callers, already covered via mocks in `tests/admin.test.ts`).
 
-## Rodando localmente (sem Docker)
+## Deployment
 
-Pré-requisitos: Node 22+, um PostgreSQL acessível (ex.: `docker compose up db` só para o banco).
+Currently deployed on **Render** — a Web Service (Node, free plan) + PostgreSQL (free plan, same
+region). Not Vercel (the platform used for the pre-rewrite MVP, see the removed `vercel.json`):
+Vercel's serverless model doesn't sustain the persistent WebSocket connections Socket.io needs — a
+continuously-running Node process, like Render's, is required for real-time to actually work in
+production, not just locally.
 
-```bash
-npm install
-cp .env.example .env          # ajuste DATABASE_URL etc.
-npm run prisma:migrate        # aplica as migrations
-npm run prisma:seed           # popula duas clínicas de exemplo
-npm run dev                   # tsx watch — http://localhost:3000
-```
+This repo includes a [render.yaml](render.yaml) Blueprint matching the production configuration.
+Full deployment guide, including the exact steps used for the first real deploy (and the two
+production-only build bugs found and fixed along the way): **[docs/deployment.md](docs/deployment.md)**.
 
-## Rodando via Docker
+**Free tier note:** Render's free Postgres expires 30 days after creation (recreate it, or upgrade,
+before then); the free Web Service sleeps after 15 minutes without traffic — the same trade-off
+already accepted by the AccessCore identity service this project depends on.
 
-```bash
-docker compose up --build -V   # -V força recriar o volume anônimo do node_modules
-docker compose exec app npx prisma migrate deploy   # primeira vez (banco vazio)
-docker compose exec app npx prisma db seed
-```
+## Future Improvements
 
-App em `http://localhost:3000`, Postgres exposto em `localhost:5434` (para rodar `npm test`/Prisma
-Studio do host enquanto o banco vive no container). `docker compose down -v` derruba tudo,
-incluindo os dados.
+Known, deliberate scope boundaries for this release — not bugs:
 
-## Deploy
+- **Clinic membership invite flow.** Today, linking an AccessCore user to a clinic (`Membro` table)
+  is done via direct database access — there's no `POST /admin/membros` route. Reasonable for a
+  single clinic (or a portfolio demo); an email-based invite flow would be the natural next step
+  for several clinics self-managing their own staff.
+- **CSP with nonces.** Would require moving the inline `<script>` in `index.html` to an external
+  file — see [docs/architecture.md](docs/architecture.md).
+- **Orphaned-reservation cleanup job**, for the rare case where Stripe becomes unreachable exactly
+  between creating the reservation and creating the checkout session — that specific case no
+  longer locks the slot (see [CHANGELOG.md](CHANGELOG.md)), but a periodic job would be an extra
+  safety net.
+- **Frontend as a separate application** (today it's static HTML/CSS/JS served by Express itself)
+  — a prerequisite, along with the CSP work, for a richer UI without touching the backend.
+- **Payment history after cancellation.** Cancelling an already-paid booking also removes the
+  `Pagamento` record (cascade) — keeping history would require soft-deleting `Agendamento` instead.
+- **CI pipeline** (GitHub Actions) running typecheck/lint/test on every PR — validation today is
+  run manually before each release.
 
-Deploy atual: **Render** — Web Service (Node, plano free) + PostgreSQL (plano free, mesma região).
-Motivo de não ser Vercel (a plataforma usada na primeira versão deste projeto, ver o
-`vercel.json` removido no histórico): o modelo serverless da Vercel não sustenta as conexões
-WebSocket persistentes que o Socket.io precisa — um Web Service com processo Node contínuo, como o
-do Render, é necessário para o tempo real funcionar de verdade em produção, não só localmente.
+## License
 
-Este repositório inclui um [render.yaml](render.yaml) (Blueprint) com a mesma configuração usada em
-produção — a forma mais simples de reproduzir o deploy é:
-
-1. Em [dashboard.render.com](https://dashboard.render.com) → **New +** → **Blueprint** → conecte
-   este repositório. O Render detecta o `render.yaml` e provisiona o Web Service + o Postgres.
-2. Preencha as variáveis marcadas `sync: false` (`APP_BASE_URL` — a URL que o Render atribuir ao
-   serviço; `STRIPE_SECRET_KEY`/`STRIPE_WEBHOOK_SECRET`/`SMTP_*` se/quando disponíveis) direto no
-   dashboard — nunca ficam commitadas.
-3. `npm start` (`prisma migrate deploy && node dist/server.js`) aplica as migrations pendentes
-   automaticamente a cada deploy — não é um passo manual separado.
-4. Popular o banco de produção pela primeira vez: como o plano free do Render não inclui _one-off
-   jobs_, o seed foi rodado apontando temporariamente o _start command_ do serviço para
-   `... && node dist/prisma/seed.js && node dist/server.js` por um deploy, e revertido em seguida
-   — documentado em detalhe no relatório do Checkpoint 5.
-
-**Nota sobre o plano free:** o Postgres free do Render expira automaticamente 30 dias após a
-criação (é preciso recriar o banco — ou migrar para um plano pago — antes disso para não perder os
-dados); o Web Service free "dorme" após 15 minutos sem tráfego (mesmo trade-off já aceito hoje pelo
-AccessCore, que roda no mesmo tipo de plano).
-
-## Variáveis de ambiente
-
-Copie `.env.example` para `.env`. Referência completa (todas comentadas no próprio arquivo):
-
-| Variável                                                                            | Obrigatória                    | Descrição                                                                                              |
-| ----------------------------------------------------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `PORT`                                                                              | não (default `3000`)           | Porta HTTP.                                                                                            |
-| `NODE_ENV`                                                                          | não                            | `production` ativa log JSON puro e cookie de refresh com `Secure`.                                     |
-| `LOG_LEVEL`                                                                         | não (default `info`)           | Nível mínimo de log do pino.                                                                           |
-| `DATABASE_URL`                                                                      | sim                            | Conexão PostgreSQL.                                                                                    |
-| `ALLOWED_ORIGINS`                                                                   | não                            | Origens de CORS liberadas, separadas por vírgula. Vazio = fechado (front e back são same-origin hoje). |
-| `ACCESSCORE_URL`                                                                    | sim                            | Base URL (com `/api/v1`) da instância do AccessCore.                                                   |
-| `ACCESSCORE_ADMIN_EMAIL` / `ACCESSCORE_ADMIN_PASSWORD`                              | não                            | Só para `scripts/bootstrap-accesscore.ts`, não lidas em runtime.                                       |
-| `APP_BASE_URL`                                                                      | sim                            | URL pública desta app, usada nos links de retorno do Stripe Checkout.                                  |
-| `STRIPE_SECRET_KEY`                                                                 | sim, para pagamentos           | Chave secreta do Stripe (`sk_test_...`).                                                               |
-| `STRIPE_WEBHOOK_SECRET`                                                             | sim, para confirmar pagamentos | Segredo (`whsec_...`) do webhook.                                                                      |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` | não                            | Sem `SMTP_HOST`, cai no fallback Ethereal (dev/teste).                                                 |
-
-## Rotas da API
-
-Todas as rotas abaixo (exceto `/health` e `/webhooks/stripe`) vivem sob `/clinicas/:clinicaSlug`.
-
-| Método | Rota                                           | Descrição                                         |
-| ------ | ---------------------------------------------- | ------------------------------------------------- |
-| GET    | `/health`                                      | Healthcheck (checa conectividade com o banco)     |
-| GET    | `/especialidades`                              | Especialidades distintas da clínica               |
-| GET    | `/profissionais`                               | Profissionais (filtro opcional `?especialidade=`) |
-| GET    | `/profissionais/:id/datas`                     | Datas disponíveis de um profissional              |
-| POST   | `/agendamentos`                                | Cria reserva + sessão de checkout Stripe          |
-| GET    | `/agendamentos/:cpf`                           | Busca agendamentos por CPF                        |
-| DELETE | `/agendamentos/:id`                            | Cancela (paciente, exige `cpf` no corpo)          |
-| POST   | `/auth/login`, `/auth/refresh`, `/auth/logout` | Autenticação via AccessCore                       |
-| POST   | `/admin/profissionais`                         | Cria profissional (`profissionais:manage`)        |
-| DELETE | `/admin/agendamentos/:id`                      | Cancela como equipe (`agendamentos:manage`)       |
-| POST   | `/webhooks/stripe`                             | Webhook do Stripe                                 |
-
-## Roadmap futuro
-
-Itens conhecidos e deliberadamente fora do escopo atual (não são bugs — são a linha onde este
-projeto parou de propósito):
-
-- **Convite de membro para uma clínica.** Hoje, associar um usuário do AccessCore a uma clínica
-  (tabela `Membro`) é feito por acesso direto ao banco — não existe uma rota `POST
-/admin/membros`. Razoável para uma clínica só (ou para o portfólio); um fluxo de convite por
-  e-mail seria o próximo passo natural para várias clínicas se auto-gerenciando.
-- **CSP com nonce.** Exigiria mover o `<script>` inline do `index.html` para um arquivo externo —
-  ver [Decisões técnicas](#decisões-técnicas).
-- **Job de limpeza de reservas órfãs** para o caso (raro, mas possível) de o Stripe ficar
-  indisponível bem no meio da criação da sessão de checkout, depois do agendamento já ter sido
-  criado — hoje esse caso específico já não trava a vaga (ver bug corrigido no relatório do
-  Checkpoint 5), mas um job periódico seria uma camada extra de segurança.
-- **Front-end como aplicação separada** (hoje é HTML/CSS/JS estático servido pelo próprio Express)
-  — pré-requisito, junto com a CSP, para uma UI mais rica sem reescrever o backend.
-- **Histórico de pagamento pós-cancelamento.** Cancelar um agendamento já pago também remove o
-  registro de `Pagamento` (cascade) — manter histórico exigiria soft-delete no `Agendamento`.
-
-## Capturas de tela
-
-_Adicione aqui screenshots/GIF do fluxo de reserva, do painel administrativo e do e-mail de
-confirmação — a aplicação está no ar em https://horizonte-saude-api.onrender.com para gravar._
+[MIT](LICENSE) — see the license file for details.

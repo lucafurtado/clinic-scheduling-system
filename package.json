@@ -1,4 +1,27 @@
 {
+  "name": "clinicflow",
+  "version": "1.0.0",
+  "description": "Multi-tenant clinic scheduling platform with Stripe payments, real-time availability and delegated authentication.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lucafurtado/clinic-scheduling-system.git"
+  },
+  "keywords": [
+    "typescript",
+    "nodejs",
+    "express",
+    "postgresql",
+    "prisma",
+    "stripe",
+    "socketio",
+    "docker",
+    "multi-tenant",
+    "rbac",
+    "rest-api",
+    "healthcare",
+    "backend"
+  ],
   "engines": {
     "node": ">=22"
   },
