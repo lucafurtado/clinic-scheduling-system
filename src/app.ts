@@ -14,7 +14,7 @@ import { webhooksRouter } from './routes/webhooks.routes';
 export function createApp() {
   const app = express();
 
-  // Atrás de 1 proxy reverso em produção (Railway termina TLS e encaminha por
+  // Atrás de 1 proxy reverso em produção (o Render termina TLS e encaminha por
   // HTTP) — sem isso, req.ip e req.secure refletem o proxy, não o cliente real,
   // o que quebra a IP-detection do rate limiter. Inofensivo localmente (sem
   // proxy na frente, não há X-Forwarded-* para "confiar" de qualquer forma).

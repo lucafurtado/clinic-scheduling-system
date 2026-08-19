@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
 
 // Sem prefixo de clínica de propósito — é o endpoint que a plataforma de deploy
-// (Railway) chama periodicamente para decidir se a instância está saudável,
+// (Render) chama periodicamente para decidir se a instância está saudável,
 // não uma rota de negócio. Checa o banco (não só "o processo está de pé"):
 // um servidor no ar mas sem conseguir falar com o Postgres não está saudável.
 export async function healthCheck(req: Request, res: Response) {

@@ -1,7 +1,7 @@
 import pino from 'pino';
 
 // Pretty-print legível em dev/teste; JSON estruturado (uma linha por evento,
-// pronto para um agregador de logs) em produção — é o formato que a Railway
+// pronto para um agregador de logs) em produção — é o formato que o Render
 // (e qualquer plataforma que colete stdout) espera.
 export const logger = pino({
   level: process.env.LOG_LEVEL ?? 'info',

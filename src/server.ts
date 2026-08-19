@@ -11,7 +11,7 @@ if (require.main === module) {
   iniciarSocket(httpServer);
   httpServer.listen(PORT, () => logger.info(`Servidor rodando na porta ${PORT}`));
 
-  // Railway (e a maioria das plataformas de deploy) manda SIGTERM antes de
+  // Render (e a maioria das plataformas de deploy) manda SIGTERM antes de
   // matar o processo em cada redeploy/restart — sem isso, requisições em voo
   // e conexões de Socket.io são derrubadas abruptamente em vez de encerradas
   // com folga, e a conexão com o Postgres fica pendurada.

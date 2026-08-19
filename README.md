@@ -245,6 +245,12 @@ DATABASE_URL="postgresql://horizonte:horizonte@localhost:5434/horizonte_saude_te
 um reseta as tabelas entre casos — rodar em paralelo (o padrão do Jest) causa violação de foreign
 key entre suítes concorrentes.
 
+`npx jest --coverage` gera relatório de cobertura (~85% de statements/lines no total). Cobertura
+mais baixa concentrada em código que a suíte deliberadamente não exercita de ponta a ponta:
+`src/realtime/socket.ts` (handshake real de WebSocket, fora do escopo de um teste HTTP com
+Supertest) e `src/services/accessCoreClient.ts` (cliente HTTP fino — o que importa testar é o
+comportamento de quem o usa, já coberto via mock em `tests/admin.test.ts`).
+
 ## Rodando localmente (sem Docker)
 
 Pré-requisitos: Node 22+, um PostgreSQL acessível (ex.: `docker compose up db` só para o banco).
